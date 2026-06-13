@@ -1,0 +1,52 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>API Mapper Panel</title>
+  <link rel="stylesheet" href="panel.css" />
+</head>
+<body>
+  <div id="progress-bar" class="hidden"></div>
+
+  <div id="url-bar">
+    <span id="url-label">URL</span>
+    <input type="text" id="url-input" placeholder="Enter URL to navigate (e.g. example.com or https://...)" autocomplete="off" />
+    <button id="url-go-btn">Go</button>
+  </div>
+
+  <div id="toolbar">
+    <input type="text" id="filter-input" placeholder="Filter by URL, method, or status..." autocomplete="off" />
+    <span id="count-badge" title="Captured calls">0</span>
+    <button id="capture-toggle">&#9646;&#9646; Pause</button>
+    <button id="clear-btn">Clear</button>
+    <button id="export-csv">Export CSV</button>
+    <button id="export-json">Export JSON</button>
+  </div>
+
+  <div id="main">
+    <div id="table-wrapper">
+      <table id="api-table">
+        <thead>
+          <tr>
+            <th class="col-method">Method</th>
+            <th class="col-url">URL / Path</th>
+            <th class="col-status">Status</th>
+            <th class="col-time">Time</th>
+            <th class="col-trigger">Trigger</th>
+            <th class="col-actions"></th>
+          </tr>
+        </thead>
+        <tbody id="api-table-body"></tbody>
+      </table>
+      <div id="empty-state">
+        <p>No API calls captured yet.</p>
+        <p>Enter a URL above, or interact with the page.</p>
+      </div>
+    </div>
+
+    <div id="detail-panel" class="hidden"></div>
+  </div>
+
+  <script src="panel.js"></script>
+</body>
+</html>

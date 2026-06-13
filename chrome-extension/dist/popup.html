@@ -1,0 +1,99 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>API Mapper</title>
+  <link rel="stylesheet" href="popup.css" />
+</head>
+<body>
+  <div id="app">
+
+    <!-- Header -->
+    <header>
+      <div class="header-left">
+        <img src="icons/icon32.png" alt="" class="logo" />
+        <span class="title">API Mapper</span>
+      </div>
+      <span id="status-dot" class="idle">● Idle</span>
+    </header>
+
+    <!-- Current page -->
+    <div id="page-bar">
+      <span class="page-label">Page</span>
+      <span id="page-host" class="page-host">—</span>
+    </div>
+
+    <!-- Stats + controls row -->
+    <div id="stats-row">
+      <span id="stat-count">0 captured</span>
+      <span class="divider">·</span>
+      <span id="stat-detected">0 detected</span>
+      <span id="stat-missed" class="missed-badge hidden"></span>
+      <span class="divider">·</span>
+      <span id="stat-hosts">0 hosts</span>
+      <span class="spacer"></span>
+      <button id="toggle-capture" class="ctrl-btn">⏸ Pause</button>
+      <button id="clear-all"      class="ctrl-btn">✕ Clear</button>
+    </div>
+
+    <!-- Endpoint list (shrinks when detail panel is open) -->
+    <div id="endpoint-list">
+      <div id="no-data">
+        <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+          <path d="M9 19l-7-7 7-7M15 5l7 7-7 7" stroke-linecap="round" stroke-linejoin="round"/>
+        </svg>
+        <p>No API calls captured yet.</p>
+        <p class="hint">Browse any page — calls appear here automatically.</p>
+      </div>
+    </div>
+
+    <!-- Detail panel (hidden until a row is clicked) -->
+    <div id="detail-panel" class="hidden">
+      <div id="detail-header">
+        <span id="detail-method" class="method">GET</span>
+        <span id="detail-url" class="detail-url"></span>
+        <button id="close-detail" title="Close">✕</button>
+      </div>
+
+      <!-- Tab bar -->
+      <div id="detail-tabs">
+        <button class="tab-btn active" data-tab="response">Response</button>
+        <button class="tab-btn"        data-tab="request">Request</button>
+        <button class="tab-btn"        data-tab="context">Context</button>
+      </div>
+
+      <!-- Tab panes -->
+      <div id="pane-response" class="tab-pane active">
+        <pre id="response-body" class="code-pre"></pre>
+      </div>
+      <div id="pane-request" class="tab-pane hidden">
+        <table class="detail-table">
+          <tr><td class="dt-label">Method</td><td id="req-method" class="dt-val"></td></tr>
+          <tr><td class="dt-label">URL</td>   <td id="req-url"    class="dt-val mono"></td></tr>
+          <tr><td class="dt-label">Status</td><td id="req-status" class="dt-val"></td></tr>
+          <tr><td class="dt-label">Body</td>  <td id="req-body"   class="dt-val mono"></td></tr>
+        </table>
+        <div class="detail-section-title">Request Headers</div>
+        <pre id="req-headers" class="code-pre small"></pre>
+      </div>
+      <div id="pane-context" class="tab-pane hidden">
+        <table class="detail-table">
+          <tr><td class="dt-label">Trigger</td>   <td id="ctx-trigger"   class="dt-val"></td></tr>
+          <tr><td class="dt-label">Element</td>   <td id="ctx-element"   class="dt-val mono"></td></tr>
+          <tr><td class="dt-label">DOM Path</td>  <td id="ctx-dompath"   class="dt-val mono small"></td></tr>
+          <tr><td class="dt-label">Page</td>      <td id="ctx-page"      class="dt-val mono small"></td></tr>
+          <tr><td class="dt-label">Component</td> <td id="ctx-component" class="dt-val mono"></td></tr>
+        </table>
+      </div>
+    </div>
+
+    <!-- Bottom action bar -->
+    <div id="actions">
+      <button id="export-csv">⬇ CSV</button>
+      <button id="export-json">⬇ JSON</button>
+    </div>
+
+  </div>
+  <script src="popup.js"></script>
+</body>
+</html>
