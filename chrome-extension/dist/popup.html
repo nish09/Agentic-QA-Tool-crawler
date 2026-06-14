@@ -23,69 +23,115 @@
       <span id="page-host" class="page-host">—</span>
     </div>
 
-    <!-- Stats + controls row -->
-    <div id="stats-row">
-      <span id="stat-count">0 captured</span>
-      <span class="divider">·</span>
-      <span id="stat-detected">0 detected</span>
-      <span id="stat-missed" class="missed-badge hidden"></span>
-      <span class="divider">·</span>
-      <span id="stat-hosts">0 hosts</span>
-      <span class="spacer"></span>
-      <button id="toggle-capture" class="ctrl-btn">⏸ Pause</button>
-      <button id="clear-all"      class="ctrl-btn">✕ Clear</button>
+    <!-- Mode tabs -->
+    <div id="mode-tabs">
+      <button class="mode-tab active" data-mode="api">📡 API Calls</button>
+      <button class="mode-tab" data-mode="locators">🔍 Page Locators</button>
     </div>
 
-    <!-- Endpoint list (shrinks when detail panel is open) -->
-    <div id="endpoint-list">
-      <div id="no-data">
-        <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
-          <path d="M9 19l-7-7 7-7M15 5l7 7-7 7" stroke-linecap="round" stroke-linejoin="round"/>
-        </svg>
-        <p>No API calls captured yet.</p>
-        <p class="hint">Browse any page — calls appear here automatically.</p>
-      </div>
-    </div>
+    <!-- ── API Calls view ────────────────────────────────────────────────── -->
+    <div id="api-view">
 
-    <!-- Detail panel (hidden until a row is clicked) -->
-    <div id="detail-panel" class="hidden">
-      <div id="detail-header">
-        <span id="detail-method" class="method">GET</span>
-        <span id="detail-url" class="detail-url"></span>
-        <button id="close-detail" title="Close">✕</button>
+      <!-- Stats + controls row -->
+      <div id="stats-row">
+        <span id="stat-count">0 captured</span>
+        <span class="divider">·</span>
+        <span id="stat-detected">0 detected</span>
+        <span id="stat-missed" class="missed-badge hidden"></span>
+        <span class="divider">·</span>
+        <span id="stat-hosts">0 hosts</span>
+        <span class="spacer"></span>
+        <button id="toggle-capture" class="ctrl-btn">⏸ Pause</button>
+        <button id="clear-all"      class="ctrl-btn">✕ Clear</button>
       </div>
 
-      <!-- Tab bar -->
-      <div id="detail-tabs">
-        <button class="tab-btn active" data-tab="response">Response</button>
-        <button class="tab-btn"        data-tab="request">Request</button>
-        <button class="tab-btn"        data-tab="context">Context</button>
+      <!-- Endpoint list (shrinks when detail panel is open) -->
+      <div id="endpoint-list">
+        <div id="no-data">
+          <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+            <path d="M9 19l-7-7 7-7M15 5l7 7-7 7" stroke-linecap="round" stroke-linejoin="round"/>
+          </svg>
+          <p>No API calls captured yet.</p>
+          <p class="hint">Browse any page — calls appear here automatically.</p>
+        </div>
       </div>
 
-      <!-- Tab panes -->
-      <div id="pane-response" class="tab-pane active">
-        <pre id="response-body" class="code-pre"></pre>
+      <!-- Detail panel (hidden until a row is clicked) -->
+      <div id="detail-panel" class="hidden">
+        <div id="detail-header">
+          <span id="detail-method" class="method">GET</span>
+          <span id="detail-url" class="detail-url"></span>
+          <button id="close-detail" title="Close">✕</button>
+        </div>
+
+        <!-- Tab bar -->
+        <div id="detail-tabs">
+          <button class="tab-btn active" data-tab="response">Response</button>
+          <button class="tab-btn"        data-tab="request">Request</button>
+          <button class="tab-btn"        data-tab="context">Context</button>
+        </div>
+
+        <!-- Tab panes -->
+        <div id="pane-response" class="tab-pane active">
+          <pre id="response-body" class="code-pre"></pre>
+        </div>
+        <div id="pane-request" class="tab-pane hidden">
+          <table class="detail-table">
+            <tr><td class="dt-label">Method</td><td id="req-method" class="dt-val"></td></tr>
+            <tr><td class="dt-label">URL</td>   <td id="req-url"    class="dt-val mono"></td></tr>
+            <tr><td class="dt-label">Status</td><td id="req-status" class="dt-val"></td></tr>
+            <tr><td class="dt-label">Body</td>  <td id="req-body"   class="dt-val mono"></td></tr>
+          </table>
+          <div class="detail-section-title">Request Headers</div>
+          <pre id="req-headers" class="code-pre small"></pre>
+        </div>
+        <div id="pane-context" class="tab-pane hidden">
+          <table class="detail-table">
+            <tr><td class="dt-label">Trigger</td>   <td id="ctx-trigger"   class="dt-val"></td></tr>
+            <tr><td class="dt-label">Element</td>   <td id="ctx-element"   class="dt-val mono"></td></tr>
+            <tr><td class="dt-label">DOM Path</td>  <td id="ctx-dompath"   class="dt-val mono small"></td></tr>
+            <tr><td class="dt-label">Page</td>      <td id="ctx-page"      class="dt-val mono small"></td></tr>
+            <tr><td class="dt-label">Component</td> <td id="ctx-component" class="dt-val mono"></td></tr>
+          </table>
+        </div>
       </div>
-      <div id="pane-request" class="tab-pane hidden">
-        <table class="detail-table">
-          <tr><td class="dt-label">Method</td><td id="req-method" class="dt-val"></td></tr>
-          <tr><td class="dt-label">URL</td>   <td id="req-url"    class="dt-val mono"></td></tr>
-          <tr><td class="dt-label">Status</td><td id="req-status" class="dt-val"></td></tr>
-          <tr><td class="dt-label">Body</td>  <td id="req-body"   class="dt-val mono"></td></tr>
-        </table>
-        <div class="detail-section-title">Request Headers</div>
-        <pre id="req-headers" class="code-pre small"></pre>
+
+    </div><!-- /#api-view -->
+
+    <!-- ── Page Locators view ─────────────────────────────────────────────── -->
+    <div id="locators-view" class="hidden">
+
+      <!-- Toolbar: scan button | type filters | framework selector -->
+      <div id="locator-toolbar">
+        <button id="scan-btn">⬡ Scan Page</button>
+        <div id="loc-filters">
+          <button class="lf-btn active" data-filter="all">All</button>
+          <button class="lf-btn" data-filter="button">Btns</button>
+          <button class="lf-btn" data-filter="input">Inputs</button>
+          <button class="lf-btn" data-filter="link">Links</button>
+        </div>
+        <select id="fw-select">
+          <option value="both">PW + SE</option>
+          <option value="playwright">Playwright</option>
+          <option value="selenium">Selenium</option>
+        </select>
       </div>
-      <div id="pane-context" class="tab-pane hidden">
-        <table class="detail-table">
-          <tr><td class="dt-label">Trigger</td>   <td id="ctx-trigger"   class="dt-val"></td></tr>
-          <tr><td class="dt-label">Element</td>   <td id="ctx-element"   class="dt-val mono"></td></tr>
-          <tr><td class="dt-label">DOM Path</td>  <td id="ctx-dompath"   class="dt-val mono small"></td></tr>
-          <tr><td class="dt-label">Page</td>      <td id="ctx-page"      class="dt-val mono small"></td></tr>
-          <tr><td class="dt-label">Component</td> <td id="ctx-component" class="dt-val mono"></td></tr>
-        </table>
+
+      <!-- Result count line -->
+      <div id="loc-status" class="hidden"></div>
+
+      <!-- Locator item list -->
+      <div id="loc-list">
+        <div id="loc-empty">
+          <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+            <circle cx="11" cy="11" r="8"/>
+            <path d="M21 21l-4.35-4.35" stroke-linecap="round"/>
+          </svg>
+          <p>Click <strong>Scan Page</strong> to discover all testable elements on the current page.</p>
+        </div>
       </div>
-    </div>
+
+    </div><!-- /#locators-view -->
 
     <!-- Bottom action bar -->
     <div id="actions">

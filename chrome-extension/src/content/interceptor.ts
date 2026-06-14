@@ -10,7 +10,6 @@
 const MSG_SOURCE = 'api-mapper-interceptor';
 
 function emit(payload: Record<string, unknown>): void {
-  // Skip extension-internal requests to avoid infinite loops
   if (typeof payload['url'] === 'string' && payload['url'].startsWith('chrome-extension://')) return;
   window.postMessage({ __src: MSG_SOURCE, type: 'API_MAPPER_CALL', payload }, '*');
 }
@@ -39,6 +38,25 @@ function parseBody(body: unknown): unknown {
   return body;
 }
 
+function isBinaryContentType(ct: string): boolean {
+  return ct.startsWith('image/') ||
+         ct.startsWith('audio/') ||
+         ct.startsWith('video/') ||
+         ct.startsWith('font/')  ||
+         ct === 'application/octet-stream' ||
+         ct === 'application/pdf' ||
+         ct === 'application/zip' ||
+         ct.startsWith('application/wasm');
+}
+
+function decodeText(raw: string): unknown {
+  if (raw.length === 0) return '(empty body)';
+  const trimmed = raw.trim();
+  if (trimmed.length === 0) return '(empty body)';
+  try { return JSON.parse(trimmed); } catch { /* not JSON */ }
+  return raw.length > 5000 ? raw.slice(0, 5000) + '…' : raw;
+}
+
 // ─── Patch fetch ──────────────────────────────────────────────────────────────
 
 const _fetch = window.fetch.bind(window);
@@ -48,7 +66,7 @@ window.fetch = async function (
   init?: RequestInit,
 ): Promise<Response> {
   const url =
-    input instanceof URL    ? input.href :
+    input instanceof URL      ? input.href :
     typeof input === 'string' ? input :
     (input as Request).url;
 
@@ -63,42 +81,64 @@ window.fetch = async function (
     ?? (typeof input !== 'string' && !(input instanceof URL) ? (input as Request).headers : undefined),
   );
   const requestBody = parseBody(init?.body);
-  const timestamp = Date.now();
+  const timestamp   = Date.now();
 
   const response = await _fetch(input, init);
 
-  // Clone before reading so the original stream is untouched
-  const clone = response.clone();
-  let responseBody: unknown = null;
+  // ── Body capture ─────────────────────────────────────────────────────────
+  // We consume the original response body directly with .text() instead of
+  // clone().text() — clone() silently returns '' for certain response types
+  // in the MAIN world (opaque, early-body, some cross-origin patterns).
+  // After reading, we reconstruct a new Response for the page so it can still
+  // call .json() / .text() normally.
+  let responseBody: unknown;
+  let responseForPage: Response = response;
+
   try {
     const ct = (response.headers.get('content-type') ?? '').toLowerCase();
-    const isBinary = ct.startsWith('image/') || ct.startsWith('audio/') ||
-                     ct.startsWith('video/') || ct.startsWith('font/');
-    if (!isBinary) {
-      const text = await clone.text();
-      if (text) {
-        try { responseBody = JSON.parse(text); } catch { responseBody = text.slice(0, 5000); }
-      }
+
+    if (isBinaryContentType(ct)) {
+      responseBody = `[Binary: ${ct || 'unknown'}]`;
+      // Binary: return original response untouched — body unread, page uses it normally
+    } else {
+      // Consume body from the original response stream
+      const rawText = await response.text();
+      responseBody  = decodeText(rawText);
+
+      // Reconstruct a Response with the same body for the page.
+      // Strip content-encoding (browser already decoded; forwarding it would cause
+      // double-decode errors) and content-length (byte count changed after decoding).
+      const newHeaders = new Headers(response.headers);
+      newHeaders.delete('content-encoding');
+      newHeaders.delete('content-length');
+
+      responseForPage = new Response(rawText, {
+        status:     response.status,
+        statusText: response.statusText,
+        headers:    newHeaders,
+      });
     }
-  } catch { /* ignore read errors */ }
+  } catch (e) {
+    responseBody = `(read error: ${e instanceof Error ? e.message : String(e)})`;
+    // responseForPage stays as the original — page may still recover
+  }
 
   emit({
     url,
     method,
     requestHeaders,
     requestBody,
-    responseStatus: response.status,
+    responseStatus:  response.status,
     responseHeaders: headersToObj(response.headers),
     responseBody,
     timestamp,
   });
 
-  return response;
+  return responseForPage;
 };
 
 // ─── Patch XMLHttpRequest ─────────────────────────────────────────────────────
 
-// Use unique string keys prefixed with a rare string to avoid property clashes
 const P = '__am_';
 
 const _xhrOpen   = XMLHttpRequest.prototype.open;
@@ -127,27 +167,43 @@ XMLHttpRequest.prototype.send = function (body?: Document | XMLHttpRequestBodyIn
     const xhrUrl = this[P + 'u'];
     if (!xhrUrl) return;
 
-    let responseBody: unknown = null;
+    // ── XHR body capture ───────────────────────────────────────────────────
+    let responseBody: unknown;
     try {
-      const ct = (this.getResponseHeader('content-type') ?? '').toLowerCase();
-      const isBinary = ct.startsWith('image/') || ct.startsWith('audio/') ||
-                       ct.startsWith('video/') || ct.startsWith('font/');
-      if (!isBinary && (this.responseType === '' || this.responseType === 'text')) {
-        const text = this.responseText ?? '';
-        if (text) {
-          try { responseBody = JSON.parse(text); }
-          catch { responseBody = text.slice(0, 5000); }
-        }
-      }
-    } catch { /* ignore */ }
+      const ct      = (this.getResponseHeader('content-type') ?? '').toLowerCase();
+      const rType   = this.responseType as string;
 
+      if (isBinaryContentType(ct)) {
+        responseBody = `[Binary: ${ct || 'unknown'}]`;
+      } else if (rType === 'json') {
+        // When responseType='json' the browser parses it; responseText is empty
+        responseBody = this.response ?? '(empty body)';
+      } else if (rType === '' || rType === 'text') {
+        responseBody = decodeText(this.responseText ?? '');
+      } else if (rType === 'document') {
+        // Try to get the outer HTML from the parsed document
+        const doc = this.response as Document | null;
+        const html = doc?.documentElement?.outerHTML ?? '';
+        responseBody = html.length > 0
+          ? (html.length > 5000 ? html.slice(0, 5000) + '…' : html)
+          : '[HTML/XML Document]';
+      } else {
+        // 'arraybuffer', 'blob', or unknown — cannot read as text
+        responseBody = `[${rType || 'unknown'} response — body not readable]`;
+      }
+    } catch (e) {
+      // Surface errors so the user sees WHY the body is missing, not just null
+      responseBody = `(read error: ${e instanceof Error ? e.message : String(e)})`;
+    }
+
+    // ── Response headers ───────────────────────────────────────────────────
     const responseHeaders: Record<string, string> = {};
     try {
       for (const line of (this.getAllResponseHeaders() ?? '').trim().split('\r\n')) {
         const sep = line.indexOf(': ');
         if (sep > 0) responseHeaders[line.slice(0, sep).toLowerCase()] = line.slice(sep + 2);
       }
-    } catch { /* ignore */ }
+    } catch { /* headers not available — not fatal */ }
 
     emit({
       url:            xhrUrl,
