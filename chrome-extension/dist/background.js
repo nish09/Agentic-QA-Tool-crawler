@@ -104,16 +104,22 @@ chrome.webRequest.onCompleted.addListener(async (details) => {
     await chrome.storage.local.set({ [key]: count + 1 });
 }, { urls: ['<all_urls>'], types: ['xmlhttprequest'] });
 // ─── Clear data on tab navigation ────────────────────────────────────────────
+// webNavigation.onBeforeNavigate fires exactly once per main-frame navigation
+// (including reloads) and ignores iframe loads — unlike tabs.onUpdated which
+// re-fires with status:'loading' whenever any iframe inside the tab loads,
+// which would wipe captured calls mid-session.
+chrome.webNavigation.onBeforeNavigate.addListener((details) => {
+    if (details.frameId !== 0)
+        return; // main frame only
+    cancelSettled(details.tabId);
+    chrome.storage.local.remove([
+        `qalens_${details.tabId}`,
+        `qalens_detected_${details.tabId}`,
+        `qalens_settled_${details.tabId}`,
+    ]);
+});
+// Page fully loaded — start quiet-period timer (captures lazy-loaded API calls too)
 chrome.tabs.onUpdated.addListener((tabId, changeInfo) => {
-    if (changeInfo.status === 'loading' && changeInfo.url) {
-        cancelSettled(tabId);
-        chrome.storage.local.remove([
-            `qalens_${tabId}`,
-            `qalens_detected_${tabId}`,
-            `qalens_settled_${tabId}`,
-        ]);
-    }
-    // Page fully loaded — start quiet-period timer (captures lazy-loaded API calls too)
     if (changeInfo.status === 'complete') {
         scheduleSettled(tabId);
     }

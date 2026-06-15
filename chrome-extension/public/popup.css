@@ -411,6 +411,27 @@ header {
 .host-name  { font-family: var(--mono); font-size: 11px; color: var(--text); }
 .host-count { font-size: 10px; color: var(--muted); }
 
+.summary-header {
+  padding: 5px 10px;
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--muted);
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.summary-empty {
+  padding: 20px;
+  text-align: center;
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.ep-readonly { cursor: default; }
+.ep-readonly:hover { background: transparent; }
+
 .info-panel {
   padding: 20px 16px;
   display: flex;

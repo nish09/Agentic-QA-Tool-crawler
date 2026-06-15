@@ -238,22 +238,19 @@ function renderStatView(): void {
       if (activeHostFilter) renderCapturedList(activeHostFilter);
       else renderHostBreakdown();
       break;
-    case 'detected': {
-      const total = detectedCount;
-      renderInfoPanel(
-        `${total} call${total !== 1 ? 's' : ''} detected`,
-        `The browser network layer observed ${total} API request${total !== 1 ? 's' : ''} on this page. Of these, ${currentCalls.length} were fully captured with response bodies.`,
-        'info'
+    case 'detected':
+      renderEndpointSummary(
+        currentCalls,
+        `${currentCalls.length} of ${detectedCount} detected`
       );
       break;
-    }
     case 'missed': {
       const missed = Math.max(0, detectedCount - currentCalls.length);
       renderInfoPanel(
         missed > 0 ? `${missed} call${missed !== 1 ? 's' : ''} not captured` : 'All calls captured',
         missed > 0
-          ? `${missed} request${missed !== 1 ? 's' : ''} were detected but could not be fully captured — likely fired before the extension was ready or lacked an inspectable response body.`
-          : 'Every detected API call was successfully captured with a full response body.',
+          ? `${missed} request${missed !== 1 ? 's' : ''} were detected at the network layer but fired before the extension was ready — no endpoint details available.`
+          : 'Every detected API call was successfully captured.',
         missed > 0 ? 'warn' : 'ok'
       );
       break;
@@ -349,6 +346,48 @@ function renderHostBreakdown(): void {
       fragment.appendChild(row);
     });
 
+  endpointListEl.appendChild(fragment);
+}
+
+function renderEndpointSummary(calls: StoredCall[], subtitle: string): void {
+  hideDetail();
+  noDataEl.classList.add('hidden');
+  [...endpointListEl.children].forEach(c => { if (c !== noDataEl) c.remove(); });
+
+  const header = document.createElement('div');
+  header.className = 'summary-header';
+  header.textContent = subtitle;
+  endpointListEl.appendChild(header);
+
+  if (calls.length === 0) {
+    const empty = document.createElement('div');
+    empty.className = 'summary-empty';
+    empty.textContent = 'No calls captured yet.';
+    endpointListEl.appendChild(empty);
+    return;
+  }
+
+  const fragment = document.createDocumentFragment();
+  [...calls].sort((a, b) => b.timestamp - a.timestamp).forEach(c => {
+    const div = document.createElement('div');
+    div.className = 'ep-row ep-readonly';
+
+    let path: string;
+    try {
+      const u = new URL(c.url);
+      path = u.pathname + (u.search.length > 1 ? u.search.slice(0, 20) + (u.search.length > 20 ? '…' : '') : '');
+    } catch { path = c.url; }
+    if (path.length > 52) path = path.slice(0, 52) + '…';
+
+    const sc = c.responseStatus;
+    const scCls = sc >= 500 ? 'err' : sc >= 400 ? 'warn' : 'ok';
+
+    div.innerHTML = `
+      <span class="method m-${c.method.toLowerCase()}">${c.method}</span>
+      <span class="path" title="${escHtml(c.url)}">${escHtml(path)}</span>
+      <span class="sc sc-${scCls}">${sc}</span>`;
+    fragment.appendChild(div);
+  });
   endpointListEl.appendChild(fragment);
 }
 
