@@ -9,7 +9,8 @@
     "activeTab",
     "tabs",
     "sidePanel",
-    "webRequest"
+    "webRequest",
+    "webNavigation"
   ],
 
   "side_panel": {
@@ -26,12 +27,14 @@
       "matches": ["<all_urls>"],
       "js": ["interceptor.js"],
       "run_at": "document_start",
-      "world": "MAIN"
+      "world": "MAIN",
+      "all_frames": true
     },
     {
       "matches": ["<all_urls>"],
       "js": ["content.js"],
-      "run_at": "document_start"
+      "run_at": "document_idle",
+      "all_frames": true
     }
   ],
 

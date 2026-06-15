@@ -13,10 +13,10 @@
 // ─── DOM refs ─────────────────────────────────────────────────────────────────
 const pageHostEl = document.getElementById('page-host');
 const statusDotEl = document.getElementById('status-dot');
-const statCountEl = document.getElementById('stat-count');
-const statHostsEl = document.getElementById('stat-hosts');
-const statDetectedEl = document.getElementById('stat-detected');
-const statMissedEl = document.getElementById('stat-missed');
+const statCapturedNumEl = document.getElementById('stat-captured-num');
+const statDetectedNumEl = document.getElementById('stat-detected-num');
+const statMissedNumEl = document.getElementById('stat-missed-num');
+const statHostsNumEl = document.getElementById('stat-hosts-num');
 const endpointListEl = document.getElementById('endpoint-list');
 const noDataEl = document.getElementById('no-data');
 const toggleBtn = document.getElementById('toggle-capture');
@@ -62,6 +62,8 @@ let currentMode = 'api';
 let allLocators = [];
 let locatorFilter = 'all';
 let locatorFramework = 'both';
+let activeStatView = 'captured';
+let activeHostFilter = null;
 // ─── Init ─────────────────────────────────────────────────────────────────────
 async function init() {
     const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
@@ -90,6 +92,10 @@ async function init() {
         currentCalls = [];
         allLocators = [];
         isSettled = false;
+        activeStatView = 'captured';
+        activeHostFilter = null;
+        document.querySelectorAll('.stat-pill').forEach(p => p.classList.remove('active'));
+        document.getElementById('stat-count')?.classList.add('active');
         hideDetail();
         const t = await chrome.tabs.get(info.tabId);
         if (t.url) {
@@ -151,14 +157,25 @@ async function loadData(tabId) {
 }
 // ─── Render API list ──────────────────────────────────────────────────────────
 function updateVerification() {
-    statDetectedEl.textContent = `${detectedCount} detected`;
-    const missed = detectedCount - currentCalls.length;
-    if (missed > 0) {
-        statMissedEl.textContent = `⚠ ${missed} missed`;
-        statMissedEl.classList.remove('hidden');
-    }
-    else {
-        statMissedEl.classList.add('hidden');
+    const missed = Math.max(0, detectedCount - currentCalls.length);
+    statDetectedNumEl.textContent = String(detectedCount);
+    statMissedNumEl.textContent = String(missed);
+    const missedBtn = document.getElementById('stat-missed');
+    if (missedBtn) {
+        if (missed > 0) {
+            missedBtn.classList.remove('hidden');
+            missedBtn.classList.add('warn');
+        }
+        else {
+            missedBtn.classList.add('hidden');
+            missedBtn.classList.remove('warn');
+            if (activeStatView === 'missed') {
+                activeStatView = 'captured';
+                document.querySelectorAll('.stat-pill').forEach(p => p.classList.remove('active'));
+                document.getElementById('stat-count')?.classList.add('active');
+                renderStatView();
+            }
+        }
     }
 }
 function renderList() {
@@ -168,18 +185,64 @@ function renderList() {
     catch {
         return '?';
     } }));
-    statCountEl.textContent = `${currentCalls.length} captured`;
-    statHostsEl.textContent = `${hosts.size} host${hosts.size !== 1 ? 's' : ''}`;
+    statCapturedNumEl.textContent = String(currentCalls.length);
+    statHostsNumEl.textContent = String(hosts.size);
     updateVerification();
-    if (currentCalls.length === 0) {
+    renderStatView();
+}
+function renderStatView() {
+    switch (activeStatView) {
+        case 'captured':
+            renderCapturedList(null);
+            break;
+        case 'host':
+            if (activeHostFilter)
+                renderCapturedList(activeHostFilter);
+            else
+                renderHostBreakdown();
+            break;
+        case 'detected': {
+            const total = detectedCount;
+            renderInfoPanel(`${total} call${total !== 1 ? 's' : ''} detected`, `The browser network layer observed ${total} API request${total !== 1 ? 's' : ''} on this page. Of these, ${currentCalls.length} were fully captured with response bodies.`, 'info');
+            break;
+        }
+        case 'missed': {
+            const missed = Math.max(0, detectedCount - currentCalls.length);
+            renderInfoPanel(missed > 0 ? `${missed} call${missed !== 1 ? 's' : ''} not captured` : 'All calls captured', missed > 0
+                ? `${missed} request${missed !== 1 ? 's' : ''} were detected but could not be fully captured — likely fired before the extension was ready or lacked an inspectable response body.`
+                : 'Every detected API call was successfully captured with a full response body.', missed > 0 ? 'warn' : 'ok');
+            break;
+        }
+    }
+}
+function renderCapturedList(hostFilter) {
+    noDataEl.classList.add('hidden');
+    [...endpointListEl.children].forEach(c => { if (c !== noDataEl)
+        c.remove(); });
+    const calls = hostFilter
+        ? currentCalls.filter(c => { try {
+            return new URL(c.url).hostname === hostFilter;
+        }
+        catch {
+            return false;
+        } })
+        : currentCalls;
+    if (hostFilter) {
+        const crumb = document.createElement('div');
+        crumb.className = 'host-crumb';
+        crumb.innerHTML = `<button class="crumb-back">← Hosts</button><span>${escHtml(hostFilter)} · ${calls.length} call${calls.length !== 1 ? 's' : ''}</span>`;
+        crumb.querySelector('.crumb-back')?.addEventListener('click', () => {
+            activeHostFilter = null;
+            renderStatView();
+        });
+        endpointListEl.appendChild(crumb);
+    }
+    if (calls.length === 0) {
         noDataEl.classList.remove('hidden');
-        [...endpointListEl.children].forEach(c => { if (c !== noDataEl)
-            c.remove(); });
         return;
     }
-    noDataEl.classList.add('hidden');
-    const sorted = currentCalls
-        .map((c, i) => ({ c, i }))
+    const sorted = calls
+        .map(c => ({ c, i: currentCalls.indexOf(c) }))
         .sort((a, b) => b.c.timestamp - a.c.timestamp);
     const fragment = document.createDocumentFragment();
     sorted.forEach(({ c, i }) => {
@@ -208,9 +271,49 @@ function renderList() {
         div.addEventListener('click', () => showDetail(i));
         fragment.appendChild(div);
     });
+    endpointListEl.appendChild(fragment);
+}
+function renderHostBreakdown() {
+    hideDetail();
+    noDataEl.classList.add('hidden');
     [...endpointListEl.children].forEach(c => { if (c !== noDataEl)
         c.remove(); });
+    if (currentCalls.length === 0) {
+        noDataEl.classList.remove('hidden');
+        return;
+    }
+    const hostMap = new Map();
+    currentCalls.forEach(c => {
+        try {
+            const h = new URL(c.url).hostname;
+            hostMap.set(h, (hostMap.get(h) ?? 0) + 1);
+        }
+        catch { /* skip */ }
+    });
+    const fragment = document.createDocumentFragment();
+    [...hostMap.entries()]
+        .sort((a, b) => b[1] - a[1])
+        .forEach(([host, count]) => {
+        const row = document.createElement('div');
+        row.className = 'host-row';
+        row.innerHTML = `<span class="host-name">${escHtml(host)}</span><span class="host-count">${count} call${count !== 1 ? 's' : ''}</span>`;
+        row.addEventListener('click', () => {
+            activeHostFilter = host;
+            renderStatView();
+        });
+        fragment.appendChild(row);
+    });
     endpointListEl.appendChild(fragment);
+}
+function renderInfoPanel(title, body, type = 'info') {
+    hideDetail();
+    noDataEl.classList.add('hidden');
+    [...endpointListEl.children].forEach(c => { if (c !== noDataEl)
+        c.remove(); });
+    const panel = document.createElement('div');
+    panel.className = `info-panel ip-${type}`;
+    panel.innerHTML = `<strong class="ip-title">${escHtml(title)}</strong><p class="ip-body">${escHtml(body)}</p>`;
+    endpointListEl.appendChild(panel);
 }
 // ─── Detail panel ─────────────────────────────────────────────────────────────
 function showDetail(idx) {
@@ -282,7 +385,11 @@ function switchMode(mode) {
         apiViewEl.classList.remove('hidden');
         locatorsViewEl.classList.add('hidden');
         if (currentTabId !== null) {
-            chrome.tabs.sendMessage(currentTabId, { type: 'CLEAR_HIGHLIGHT' }).catch(() => { });
+            // Clear highlight in every frame that was scanned
+            const fids = new Set(allLocators.map(l => l.frameId ?? 0));
+            if (fids.size === 0)
+                fids.add(0);
+            fids.forEach(fid => chrome.tabs.sendMessage(currentTabId, { type: 'CLEAR_HIGHLIGHT' }, { frameId: fid }).catch(() => { }));
         }
     }
     else {
@@ -314,13 +421,34 @@ async function scanLocators() {
     scanBtn.textContent = '⟳ Scanning…';
     locStatusEl.classList.add('hidden');
     try {
-        const response = await chrome.tabs.sendMessage(currentTabId, { type: 'SCAN_PAGE_LOCATORS' });
-        if (!response.ok || !response.locators) {
-            locStatusEl.textContent = `Scan failed: ${response.error ?? 'unknown error'}`;
+        // Collect results from ALL frames (top frame + iframes like embedded ATS forms)
+        const frames = await chrome.webNavigation.getAllFrames({ tabId: currentTabId }) ?? [];
+        const frameIds = frames.map(f => f.frameId);
+        const perFrame = await Promise.allSettled(frameIds.map(frameId => chrome.tabs.sendMessage(currentTabId, { type: 'SCAN_PAGE_LOCATORS' }, { frameId })
+            .then(r => ({ ...r, frameId }))
+            .catch(() => ({ ok: false, locators: [], frameId }))));
+        const merged = [];
+        let uidOffset = 0;
+        for (const result of perFrame) {
+            if (result.status === 'fulfilled' && result.value.ok && result.value.locators) {
+                const { frameId } = result.value;
+                // Preserve original UID as localUid so highlight messages use the right key
+                const reindexed = result.value.locators.map((l, i) => ({
+                    ...l,
+                    uid: `loc-${uidOffset + i}`,
+                    localUid: l.uid,
+                    frameId,
+                }));
+                merged.push(...reindexed);
+                uidOffset += result.value.locators.length;
+            }
+        }
+        if (merged.length === 0) {
+            locStatusEl.textContent = `No interactive elements found. Try reloading the page.`;
             locStatusEl.classList.remove('hidden');
             return;
         }
-        allLocators = response.locators;
+        allLocators = merged;
         renderLocators();
     }
     catch (e) {
@@ -367,7 +495,11 @@ function renderLocators() {
             item.className = 'loc-item';
             item.dataset['type'] = loc.elType;
             item.dataset['uid'] = loc.uid;
-            const badgeLabel = loc.elType.length > 4 ? loc.elType.slice(0, 4).toUpperCase() : loc.elType.toUpperCase();
+            const TYPE_ABBR = {
+                button: 'BTN', link: 'LINK', input: 'INP', checkbox: 'CHK',
+                radio: 'RAD', select: 'SEL', textarea: 'TXT', custom: 'CUST',
+            };
+            const badgeLabel = TYPE_ABBR[loc.elType] ?? loc.elType.slice(0, 4).toUpperCase();
             let rows = '';
             if (fw === 'both' || fw === 'playwright') {
                 const pw = loc.playwright[0] ?? '';
@@ -398,15 +530,18 @@ function renderLocators() {
         </div>
         ${rows}`;
             // Hover over a card → highlight the element on the live page
+            // Use localUid (the key in the frame's locatorMap) and target the correct frame
             item.addEventListener('mouseenter', () => {
                 if (!currentTabId)
                     return;
-                chrome.tabs.sendMessage(currentTabId, { type: 'HIGHLIGHT_LOCATOR', uid: loc.uid }).catch(() => { });
+                const opts = loc.frameId !== undefined ? { frameId: loc.frameId } : {};
+                chrome.tabs.sendMessage(currentTabId, { type: 'HIGHLIGHT_LOCATOR', uid: loc.localUid ?? loc.uid }, opts).catch(() => { });
             });
             item.addEventListener('mouseleave', () => {
                 if (!currentTabId)
                     return;
-                chrome.tabs.sendMessage(currentTabId, { type: 'CLEAR_HIGHLIGHT' }).catch(() => { });
+                const opts = loc.frameId !== undefined ? { frameId: loc.frameId } : {};
+                chrome.tabs.sendMessage(currentTabId, { type: 'CLEAR_HIGHLIGHT' }, opts).catch(() => { });
             });
             fragment.appendChild(item);
         });
@@ -446,21 +581,36 @@ async function copyText(text) {
 }
 // Scan button
 scanBtn.addEventListener('click', () => scanLocators().catch(console.error));
-// Type filter buttons
-document.querySelectorAll('.lf-btn').forEach(btn => {
-    btn.addEventListener('click', () => {
-        document.querySelectorAll('.lf-btn').forEach(b => b.classList.remove('active'));
-        btn.classList.add('active');
-        locatorFilter = btn.dataset['filter'] ?? 'all';
-        if (allLocators.length > 0)
-            renderLocators();
-    });
+// Type filter buttons — event delegation so it survives any DOM rebuilds
+document.getElementById('loc-filters')?.addEventListener('click', (e) => {
+    const btn = e.target.closest('.lf-btn');
+    if (!btn)
+        return;
+    document.querySelectorAll('.lf-btn').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    locatorFilter = btn.dataset['filter'] ?? 'all';
+    if (allLocators.length > 0)
+        renderLocators();
 });
 // Framework selector
 fwSelectEl.addEventListener('change', () => {
     locatorFramework = fwSelectEl.value;
     if (allLocators.length > 0)
         renderLocators();
+});
+// Stat pill clicks → switch view
+document.getElementById('stats-row')?.addEventListener('click', (e) => {
+    const pill = e.target.closest('.stat-pill');
+    if (!pill)
+        return;
+    const stat = pill.dataset['stat'];
+    if (!stat)
+        return;
+    activeStatView = stat;
+    activeHostFilter = null;
+    document.querySelectorAll('.stat-pill').forEach(p => p.classList.remove('active'));
+    pill.classList.add('active');
+    renderStatView();
 });
 // ─── Status / capture toggle ──────────────────────────────────────────────────
 function updateStatusDot() {
@@ -516,6 +666,10 @@ clearBtn.addEventListener('click', async () => {
     ]);
     currentCalls = [];
     detectedCount = 0;
+    activeStatView = 'captured';
+    activeHostFilter = null;
+    document.querySelectorAll('.stat-pill').forEach(p => p.classList.remove('active'));
+    document.getElementById('stat-count')?.classList.add('active');
     hideDetail();
     renderList();
 });

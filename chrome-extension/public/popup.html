@@ -34,15 +34,24 @@
 
       <!-- Stats + controls row -->
       <div id="stats-row">
-        <span id="stat-count">0 captured</span>
-        <span class="divider">·</span>
-        <span id="stat-detected">0 detected</span>
-        <span id="stat-missed" class="missed-badge hidden"></span>
-        <span class="divider">·</span>
-        <span id="stat-hosts">0 hosts</span>
-        <span class="spacer"></span>
-        <button id="toggle-capture" class="ctrl-btn">⏸ Pause</button>
-        <button id="clear-all"      class="ctrl-btn">✕ Clear</button>
+        <div class="stat-pills">
+          <button class="stat-pill active" id="stat-count" data-stat="captured">
+            <span class="stat-num" id="stat-captured-num">0</span> Captured
+          </button>
+          <button class="stat-pill" id="stat-detected" data-stat="detected">
+            <span class="stat-num" id="stat-detected-num">0</span> Detected
+          </button>
+          <button class="stat-pill hidden" id="stat-missed" data-stat="missed">
+            <span class="stat-num" id="stat-missed-num">0</span> Missed
+          </button>
+          <button class="stat-pill" id="stat-hosts" data-stat="host">
+            <span class="stat-num" id="stat-hosts-num">0</span> Host
+          </button>
+        </div>
+        <div class="stat-controls">
+          <button id="toggle-capture" class="ctrl-btn">⏸ Pause</button>
+          <button id="clear-all"      class="ctrl-btn">✕ Clear</button>
+        </div>
       </div>
 
       <!-- Endpoint list (shrinks when detail panel is open) -->
