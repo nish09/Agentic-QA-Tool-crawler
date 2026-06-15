@@ -1,11 +1,11 @@
 /**
  * service-worker.ts — MV3 background service worker.
  * Receives API_CALL_CAPTURED messages from content.ts and persists them
- * to chrome.storage.local under the key "apimapper_<tabId>".
+ * to chrome.storage.local under the key "qalens_<tabId>".
  * Clears per-tab data when the tab navigates to a new URL.
  */
 
-const CAPTURE_KEY = 'apimapper_capturing';
+const CAPTURE_KEY = 'qalens_capturing';
 const MAX_BODY    = 5000;
 const SETTLE_MS   = 2500; // quiet-period before marking a tab as "done"
 
@@ -27,7 +27,7 @@ function scheduleSettled(tabId: number): void {
   if (prev) clearTimeout(prev);
   settledTimers.set(tabId, setTimeout(async () => {
     settledTimers.delete(tabId);
-    await chrome.storage.local.set({ [`apimapper_settled_${tabId}`]: true });
+    await chrome.storage.local.set({ [`qalens_settled_${tabId}`]: true });
   }, SETTLE_MS));
 }
 
@@ -35,7 +35,7 @@ function cancelSettled(tabId: number): void {
   const t = settledTimers.get(tabId);
   if (t) { clearTimeout(t); settledTimers.delete(tabId); }
   // Remove any previously persisted settled flag so the popup reverts to "Live"
-  chrome.storage.local.remove([`apimapper_settled_${tabId}`]);
+  chrome.storage.local.remove([`qalens_settled_${tabId}`]);
 }
 
 async function storeCapturedCall(tabId: number, payload: Record<string, unknown>): Promise<void> {
@@ -45,7 +45,7 @@ async function storeCapturedCall(tabId: number, payload: Record<string, unknown>
 
   cancelSettled(tabId); // new call arriving — not settled yet
 
-  const key = `apimapper_${tabId}`;
+  const key = `qalens_${tabId}`;
   const existing = await chrome.storage.local.get(key) as Record<string, unknown[]>;
   const calls: unknown[] = Array.isArray(existing[key]) ? existing[key] : [];
 
@@ -95,7 +95,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 // ─── Independent network counter (chrome.webRequest) ─────────────────────────
 // Counts ALL xmlhttprequest completions at the Chrome network layer,
 // including service-worker-initiated fetches that interceptor.ts cannot see.
-// Storage key: apimapper_detected_<tabId> (plain number).
+// Storage key: qalens_detected_<tabId> (plain number).
 
 chrome.webRequest.onCompleted.addListener(
   async (details) => {
@@ -105,7 +105,7 @@ chrome.webRequest.onCompleted.addListener(
     const flags = await chrome.storage.local.get(CAPTURE_KEY) as Record<string, unknown>;
     if (flags[CAPTURE_KEY] === false) return;
 
-    const key = `apimapper_detected_${details.tabId}`;
+    const key = `qalens_detected_${details.tabId}`;
     const existing = await chrome.storage.local.get(key) as Record<string, unknown>;
     const count = typeof existing[key] === 'number' ? (existing[key] as number) : 0;
     await chrome.storage.local.set({ [key]: count + 1 });
@@ -119,9 +119,9 @@ chrome.tabs.onUpdated.addListener((tabId, changeInfo) => {
   if (changeInfo.status === 'loading' && changeInfo.url) {
     cancelSettled(tabId);
     chrome.storage.local.remove([
-      `apimapper_${tabId}`,
-      `apimapper_detected_${tabId}`,
-      `apimapper_settled_${tabId}`,
+      `qalens_${tabId}`,
+      `qalens_detected_${tabId}`,
+      `qalens_settled_${tabId}`,
     ]);
   }
   // Page fully loaded — start quiet-period timer (captures lazy-loaded API calls too)

@@ -89,9 +89,9 @@ window.addEventListener('load', () => {
 window.addEventListener('message', (event) => {
     if (event.source !== window)
         return;
-    if (event.data?.__src !== 'api-mapper-interceptor')
+    if (event.data?.__src !== 'qalens-interceptor')
         return;
-    if (event.data?.type !== 'API_MAPPER_CALL')
+    if (event.data?.type !== 'QALENS_CALL')
         return;
     const raw = event.data.payload;
     chrome.runtime.sendMessage({

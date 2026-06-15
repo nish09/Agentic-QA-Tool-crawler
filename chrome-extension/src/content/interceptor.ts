@@ -7,11 +7,11 @@
  * Has zero Chrome extension API access — communicates only via postMessage.
  */
 
-const MSG_SOURCE = 'api-mapper-interceptor';
+const MSG_SOURCE = 'qalens-interceptor';
 
 function emit(payload: Record<string, unknown>): void {
   if (typeof payload['url'] === 'string' && payload['url'].startsWith('chrome-extension://')) return;
-  window.postMessage({ __src: MSG_SOURCE, type: 'API_MAPPER_CALL', payload }, '*');
+  window.postMessage({ __src: MSG_SOURCE, type: 'QALENS_CALL', payload }, '*');
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────

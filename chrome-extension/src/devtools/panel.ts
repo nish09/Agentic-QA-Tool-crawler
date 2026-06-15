@@ -95,8 +95,8 @@ function saveToStorage(): void {
     timestamp: c.timestamp,
   }));
   chrome.storage.local.set({
-    [`apimapper_${tabId}`]: { tabId, calls: summary, isCapturing, capturedAt: Date.now() },
-  }).catch((err: unknown) => console.warn('[API Mapper] Storage write failed:', err));
+    [`qalens_${tabId}`]: { tabId, calls: summary, isCapturing, capturedAt: Date.now() },
+  }).catch((err: unknown) => console.warn('[QALens] Storage write failed:', err));
 }
 
 function scheduleSaveToStorage(): void {
@@ -273,7 +273,7 @@ function loadHAREntries(): Promise<void> {
           renderRow(call);
           added++;
         } catch (err) {
-          console.warn('[API Mapper] HAR entry parse failed:', err);
+          console.warn('[QALens] HAR entry parse failed:', err);
         }
       }
 
@@ -303,7 +303,7 @@ function startInterception(): void {
         scheduleHideProgress();
         scheduleSaveToStorage();
       } catch (err) {
-        console.warn('[API Mapper] Failed to capture request:', err);
+        console.warn('[QALens] Failed to capture request:', err);
       }
     }
   );
@@ -450,11 +450,11 @@ function exportCSV(): void {
     .map(row => row.map(cell => `"${String(cell).replace(/"/g, '""')}"`).join(','))
     .join('\n');
 
-  downloadFile(csv, 'api-mapper-export.csv', 'text/csv');
+  downloadFile(csv, 'qalens-export.csv', 'text/csv');
 }
 
 function exportJSON(): void {
-  downloadFile(JSON.stringify(capturedCalls, null, 2), 'api-mapper-export.json', 'application/json');
+  downloadFile(JSON.stringify(capturedCalls, null, 2), 'qalens-export.json', 'application/json');
 }
 
 function downloadFile(content: string, filename: string, mimeType: string): void {
@@ -512,4 +512,4 @@ startInterception();        // 3. live-capture new requests
 showProgress();
 loadHAREntries().then(() => scheduleHideProgress()); // 4. backfill + show progress
 
-console.log('[API Mapper] Panel initialized');
+console.log('[QALens] Panel initialized');

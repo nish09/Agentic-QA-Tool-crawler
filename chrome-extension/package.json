@@ -1,7 +1,7 @@
 {
-  "name": "api-mapper-chrome-extension",
+  "name": "qalens-chrome-extension",
   "version": "0.1.0",
-  "description": "Chrome Extension MVP for API Mapper Tool",
+  "description": "QALens Chrome Extension — API capture + Page Locator generation for QA Engineers",
   "private": true,
   "scripts": {
     "prebuild": "node scripts/generate-icons.js",

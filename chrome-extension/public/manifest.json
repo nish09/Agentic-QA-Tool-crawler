@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
-  "name": "API Mapper — Auto Discover APIs",
+  "name": "QALens — Discover APIs & Page Locators",
   "version": "0.1.0",
-  "description": "Automatically discover and map all APIs used by any web application. Built for QA Engineers and Business Analysts.",
+  "description": "Capture every API call and generate Playwright/Selenium locators for any web app. Built for QA Engineers and Business Analysts.",
 
   "permissions": [
     "storage",
@@ -36,7 +36,7 @@
   ],
 
   "action": {
-    "default_title": "API Mapper",
+    "default_title": "QALens",
     "default_icon": {
       "16": "icons/icon16.png",
       "32": "icons/icon32.png",

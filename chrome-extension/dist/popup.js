@@ -78,8 +78,8 @@ async function init() {
         }
     }
     // Load capturing flag
-    const flags = await chrome.storage.local.get('apimapper_capturing');
-    isCapturing = flags['apimapper_capturing'] !== false;
+    const flags = await chrome.storage.local.get('qalens_capturing');
+    isCapturing = flags['qalens_capturing'] !== false;
     updateStatusDot();
     await loadData(tab.id);
     // Switch data when the user changes tabs
@@ -113,9 +113,9 @@ async function init() {
     chrome.storage.onChanged.addListener((changes, area) => {
         if (area !== 'local')
             return;
-        const captureKey = `apimapper_${currentTabId}`;
-        const detectedKey = `apimapper_detected_${currentTabId}`;
-        const settledKey = `apimapper_settled_${currentTabId}`;
+        const captureKey = `qalens_${currentTabId}`;
+        const detectedKey = `qalens_detected_${currentTabId}`;
+        const settledKey = `qalens_settled_${currentTabId}`;
         if (changes[captureKey]) {
             currentCalls = changes[captureKey].newValue ?? [];
             renderList();
@@ -124,8 +124,8 @@ async function init() {
             detectedCount = changes[detectedKey].newValue ?? 0;
             updateVerification();
         }
-        if (changes['apimapper_capturing']) {
-            isCapturing = changes['apimapper_capturing'].newValue;
+        if (changes['qalens_capturing']) {
+            isCapturing = changes['qalens_capturing'].newValue;
             updateStatusDot();
             updateToggleBtn();
         }
@@ -138,9 +138,9 @@ async function init() {
 }
 // ─── Data loading ─────────────────────────────────────────────────────────────
 async function loadData(tabId) {
-    const key = `apimapper_${tabId}`;
-    const detKey = `apimapper_detected_${tabId}`;
-    const settledKey = `apimapper_settled_${tabId}`;
+    const key = `qalens_${tabId}`;
+    const detKey = `qalens_detected_${tabId}`;
+    const settledKey = `qalens_settled_${tabId}`;
     const result = await chrome.storage.local.get([key, detKey, settledKey]);
     currentCalls = Array.isArray(result[key]) ? result[key] : [];
     detectedCount = typeof result[detKey] === 'number' ? result[detKey] : 0;
@@ -503,7 +503,7 @@ toggleBtn.addEventListener('click', async () => {
         return;
     }
     isCapturing = !isCapturing;
-    await chrome.storage.local.set({ apimapper_capturing: isCapturing });
+    await chrome.storage.local.set({ qalens_capturing: isCapturing });
     updateStatusDot();
     updateToggleBtn();
 });
@@ -511,8 +511,8 @@ clearBtn.addEventListener('click', async () => {
     if (currentTabId === null)
         return;
     await chrome.storage.local.remove([
-        `apimapper_${currentTabId}`,
-        `apimapper_detected_${currentTabId}`,
+        `qalens_${currentTabId}`,
+        `qalens_detected_${currentTabId}`,
     ]);
     currentCalls = [];
     detectedCount = 0;
@@ -529,10 +529,10 @@ function exportCSV() {
         c.triggerAction ?? '', c.triggerElement ?? '', c.domPath ?? '',
         c.pageUrl ?? '', new Date(c.timestamp).toISOString(),
     ]);
-    download([hdr, ...rows].map(r => r.map(v => `"${String(v).replace(/"/g, '""')}"`).join(',')).join('\n'), 'api-mapper.csv', 'text/csv');
+    download([hdr, ...rows].map(r => r.map(v => `"${String(v).replace(/"/g, '""')}"`).join(',')).join('\n'), 'qalens.csv', 'text/csv');
 }
 function exportJSON() {
-    download(JSON.stringify(currentCalls, null, 2), 'api-mapper.json', 'application/json');
+    download(JSON.stringify(currentCalls, null, 2), 'qalens.json', 'application/json');
 }
 function download(content, filename, mime) {
     const blob = new Blob([content], { type: mime });
