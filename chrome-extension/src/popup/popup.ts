@@ -637,8 +637,25 @@ function buildExportRows(): ExportRow[] {
   }));
 }
 
+// Prevents CSV/Excel formula injection: a captured URL or header-derived
+// value starting with =, +, -, @, tab, or CR would otherwise be interpreted
+// as a formula by Excel/Sheets when the exported data is pasted or opened.
+// Prefixing with a single quote is the standard mitigation both respect.
+function sanitizeForSpreadsheet(value: string): string {
+  return /^[=+\-@\t\r]/.test(value) ? `'${value}` : value;
+}
+
+function sanitizeRow(r: ExportRow): ExportRow {
+  return {
+    method: sanitizeForSpreadsheet(r.method),
+    url: sanitizeForSpreadsheet(r.url),
+    status: typeof r.status === 'string' ? sanitizeForSpreadsheet(r.status) : r.status,
+    time: typeof r.time === 'string' ? sanitizeForSpreadsheet(r.time) : r.time,
+  };
+}
+
 async function copyCSV(): Promise<void> {
-  const rows = buildExportRows();
+  const rows = buildExportRows().map(sanitizeRow);
   const hdr = ['method', 'full_url', 'status', 'time'];
   const csv = [hdr, ...rows.map(r => [r.method, r.url, r.status, r.time])]
     .map(r => r.map(v => `"${String(v).replace(/"/g, '""')}"`).join(','))
@@ -648,7 +665,7 @@ async function copyCSV(): Promise<void> {
 }
 
 async function copyJSON(): Promise<void> {
-  await copyText(JSON.stringify(buildExportRows(), null, 2));
+  await copyText(JSON.stringify(buildExportRows().map(sanitizeRow), null, 2));
   flashCopied(exportJsonEl, '⎘ Copy JSON');
 }
 

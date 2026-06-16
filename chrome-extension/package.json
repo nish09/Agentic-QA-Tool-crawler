@@ -1,13 +1,13 @@
 {
   "name": "qalens-chrome-extension",
-  "version": "0.1.0",
+  "version": "1.0.0",
   "description": "QALens Chrome Extension — API capture + Page Locator generation for QA Engineers",
   "private": true,
   "scripts": {
     "prebuild": "node scripts/generate-icons.js",
     "build": "webpack --config webpack.config.ts",
     "watch": "webpack --config webpack.config.ts --watch",
-    "build:prod": "node scripts/generate-icons.js && webpack --config webpack.config.ts",
+    "build:prod": "node scripts/generate-icons.js && cross-env NODE_ENV=production webpack --config webpack.config.ts",
     "type-check": "tsc --noEmit",
     "lint": "eslint src --ext .ts"
   },
@@ -17,7 +17,8 @@
     "@types/node": "^20.0.0",
     "@typescript-eslint/eslint-plugin": "^7.0.0",
     "@typescript-eslint/parser": "^7.0.0",
-    "copy-webpack-plugin": "^12.0.0",
+    "copy-webpack-plugin": "^14.0.0",
+    "cross-env": "^10.1.0",
     "eslint": "^8.57.0",
     "ts-loader": "^9.5.0",
     "ts-node": "^10.9.2",

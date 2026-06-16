@@ -17,10 +17,11 @@
  * richer (interceptor) record always wins when both sources observe it.
  */
 
-const CAPTURE_KEY     = 'qalens_capturing';
-const MAX_BODY        = 5000;
-const SETTLE_MS       = 2500;  // quiet-period before marking a tab as "done"
-const MERGE_WINDOW_MS = 4000;  // same method+url within this window = same request
+const CAPTURE_KEY      = 'qalens_capturing';
+const MAX_BODY         = 5000;
+const MAX_CALLS_PER_TAB = 300; // FIFO cap — oldest evicted first once exceeded
+const SETTLE_MS        = 2500;  // quiet-period before marking a tab as "done"
+const MERGE_WINDOW_MS  = 4000;  // same method+url within this window = same request
 
 interface CapturedCall {
   method: string;
@@ -43,6 +44,50 @@ interface CapturedCall {
 
 function truncateBody(value: unknown): unknown {
   if (typeof value === 'string' && value.length > MAX_BODY) return value.slice(0, MAX_BODY) + '…';
+  return value;
+}
+
+// ─── Redaction ──────────────────────────────────────────────────────────────
+// Captured headers/bodies can contain secrets (auth tokens, cookies,
+// passwords) from whatever site is being tested. Redact at the single point
+// where both capture sources (content.ts relay + chrome.webRequest) land in
+// a CapturedCall, so neither source can bypass it.
+
+const SENSITIVE_HEADER_NAMES = new Set([
+  'authorization', 'cookie', 'set-cookie', 'proxy-authorization',
+  'x-api-key', 'x-auth-token', 'api-key', 'x-csrf-token',
+]);
+
+function redactHeaders(headers?: Record<string, string>): Record<string, string> | undefined {
+  if (!headers) return headers;
+  const out: Record<string, string> = {};
+  for (const [name, value] of Object.entries(headers)) {
+    out[name] = SENSITIVE_HEADER_NAMES.has(name.toLowerCase()) ? '[redacted]' : value;
+  }
+  return out;
+}
+
+const SENSITIVE_BODY_KEYS = new Set([
+  'password', 'token', 'secret', 'apikey', 'api_key', 'accesstoken',
+  'access_token', 'refreshtoken', 'refresh_token', 'authorization',
+  'ssn', 'cardnumber', 'card_number', 'cvv',
+]);
+
+// Masks the *value* of any sensitive-looking key in a parsed JSON body
+// (objects/arrays), leaving the key visible (still useful for API mapping).
+// Non-JSON bodies (plain strings) pass through unchanged — we can't safely
+// pattern-match secrets inside arbitrary text without a high false-positive
+// rate, and the JSON case covers the overwhelming majority of API payloads.
+function redactBody(value: unknown, depth = 0): unknown {
+  if (depth > 8) return value; // guard against pathological nesting
+  if (Array.isArray(value)) return value.map(v => redactBody(v, depth + 1));
+  if (value !== null && typeof value === 'object') {
+    const out: Record<string, unknown> = {};
+    for (const [key, v] of Object.entries(value as Record<string, unknown>)) {
+      out[key] = SENSITIVE_BODY_KEYS.has(key.toLowerCase()) ? '[redacted]' : redactBody(v, depth + 1);
+    }
+    return out;
+  }
   return value;
 }
 
@@ -75,16 +120,26 @@ function cancelSettled(tabId: number): void {
 
 async function upsertCall(
   tabId: number,
-  patch: Partial<CapturedCall> & { method: string; url: string; timestamp: number; source: CapturedCall['source'] },
+  rawPatch: Partial<CapturedCall> & { method: string; url: string; timestamp: number; source: CapturedCall['source'] },
 ): Promise<void> {
   const flags = await chrome.storage.local.get(CAPTURE_KEY) as Record<string, unknown>;
   if (flags[CAPTURE_KEY] === false) return;
 
   cancelSettled(tabId);
 
+  // Redact before this patch ever touches storage — covers both capture
+  // sources (interceptor relay and chrome.webRequest) from this one place.
+  const patch = {
+    ...rawPatch,
+    requestHeaders:  redactHeaders(rawPatch.requestHeaders),
+    responseHeaders: redactHeaders(rawPatch.responseHeaders),
+    requestBody:     truncateBody(redactBody(rawPatch.requestBody)),
+    responseBody:    truncateBody(redactBody(rawPatch.responseBody)),
+  };
+
   const key = `qalens_${tabId}`;
   const existing = await chrome.storage.local.get(key) as Record<string, CapturedCall[]>;
-  const calls: CapturedCall[] = Array.isArray(existing[key]) ? existing[key] : [];
+  let calls: CapturedCall[] = Array.isArray(existing[key]) ? existing[key] : [];
 
   const idx = calls.findIndex(c =>
     c.method === patch.method &&
@@ -108,6 +163,12 @@ async function upsertCall(
     };
   }
 
+  // Retention cap — drop oldest entries first so a long/chatty session never
+  // grows storage unbounded.
+  if (calls.length > MAX_CALLS_PER_TAB) {
+    calls = calls.slice(calls.length - MAX_CALLS_PER_TAB);
+  }
+
   await chrome.storage.local.set({ [key]: calls });
   scheduleSettled(tabId);
 }
@@ -126,8 +187,8 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         timestamp: typeof payload['timestamp'] === 'number' ? payload['timestamp'] as number : Date.now(),
         source: 'interceptor',
         requestHeaders: payload['requestHeaders'] as Record<string, string> | undefined,
-        requestBody: truncateBody(payload['requestBody']),
-        responseBody: truncateBody(payload['responseBody']),
+        requestBody: payload['requestBody'],
+        responseBody: payload['responseBody'],
         responseHeaders: payload['responseHeaders'] as Record<string, string> | undefined,
         triggerAction: payload['triggerAction'] as string | undefined,
         triggerElement: payload['triggerElement'] as string | undefined,
@@ -252,6 +313,54 @@ chrome.tabs.onUpdated.addListener((tabId, changeInfo) => {
   }
 });
 
+// ─── Clear data on tab close ─────────────────────────────────────────────────
+// Without this, a closed tab's captured calls sit in chrome.storage.local
+// forever (onBeforeNavigate above only fires on navigation, not closure).
+
+chrome.tabs.onRemoved.addListener((tabId) => {
+  cancelSettled(tabId);
+  chrome.storage.local.remove([
+    `qalens_${tabId}`,
+    `qalens_settled_${tabId}`,
+  ]);
+  for (const [id, p] of pending) {
+    if (p.tabId === tabId) pending.delete(id);
+  }
+});
+
+// One-time sweep for data orphaned by *previous* installs of this extension
+// (before this listener existed) — removes qalens_<tabId>/qalens_settled_<tabId>
+// keys, and legacy pre-rename apimapper_* keys, whose tab no longer exists.
+async function sweepStaleTabData(): Promise<void> {
+  const [all, openTabs] = await Promise.all([
+    chrome.storage.local.get(null) as Promise<Record<string, unknown>>,
+    chrome.tabs.query({}),
+  ]);
+  const openIds = new Set(openTabs.map(t => t.id));
+  const stale = Object.keys(all).filter((k) => {
+    const m = /^(?:qalens|qalens_settled|apimapper|apimapper_settled|apimapper_detected|qalens_detected)_(\d+)$/.exec(k);
+    return m !== null && !openIds.has(Number(m[1]));
+  });
+  if (stale.length > 0) await chrome.storage.local.remove(stale);
+}
+
+// ─── Broadcast capture pause/resume to every tab ─────────────────────────────
+// upsertCall() only gates the storage WRITE — without this, "Pause" would
+// still let interceptor.ts/content.ts capture and relay data, just silently
+// drop it here. Broadcasting SET_CAPTURING lets content.ts stop relaying at
+// the source, so nothing leaves the page while paused.
+
+chrome.storage.onChanged.addListener((changes, area) => {
+  if (area !== 'local' || !changes[CAPTURE_KEY]) return;
+  const capturing = changes[CAPTURE_KEY].newValue !== false;
+  chrome.tabs.query({}, (tabs) => {
+    for (const tab of tabs) {
+      if (tab.id === undefined) continue;
+      chrome.tabs.sendMessage(tab.id, { type: 'SET_CAPTURING', capturing }).catch(() => {});
+    }
+  });
+});
+
 // ─── Side panel — tab-specific ───────────────────────────────────────────────
 // openPanelOnActionClick: false → Chrome does NOT auto-open the panel globally,
 // so action.onClicked fires. We then open it only for the clicked tab.
@@ -272,4 +381,5 @@ chrome.runtime.onInstalled.addListener(() => {
   chrome.sidePanel
     .setPanelBehavior({ openPanelOnActionClick: false })
     .catch(() => {});
+  sweepStaleTabData().catch(() => {});
 });

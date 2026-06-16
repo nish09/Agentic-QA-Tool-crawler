@@ -11,6 +11,22 @@ let lastUIContext: UIContext = {
   triggerAction: 'load',
 };
 
+// ─── Capture pause state ─────────────────────────────────────────────────────
+// Mirrors the background's qalens_capturing flag locally so the postMessage
+// relay below can stop forwarding captured calls to the background while
+// paused — the actual privacy boundary (nothing leaves the page) rather than
+// just skipping the storage write downstream. Defaults to true so capture
+// works immediately if storage hasn't resolved yet; corrected as soon as it
+// does, and kept in sync afterward via the SET_CAPTURING broadcast.
+let capturing = true;
+try {
+  chrome.storage.local.get('qalens_capturing', (flags) => {
+    capturing = (flags as Record<string, unknown>)['qalens_capturing'] !== false;
+  });
+} catch {
+  // Extension context not ready/valid yet — keep the default.
+}
+
 // ─── Extension context guard ──────────────────────────────────────────────────
 // When the extension is reloaded/updated (e.g. via chrome://extensions) while a
 // tab still has this content script injected from the OLD extension instance,
@@ -22,7 +38,7 @@ let lastUIContext: UIContext = {
 function isExtensionContextValid(): boolean {
   try {
     return !!chrome.runtime?.id;
-  } catch {3
+  } catch {
     return false;
   }
 }
@@ -103,6 +119,7 @@ window.addEventListener('message', (event) => {
   if (event.source !== window) return;
   if (event.data?.__src !== 'qalens-interceptor') return;
   if (event.data?.type !== 'QALENS_CALL') return;
+  if (!capturing) return; // paused — drop here so nothing leaves the page
 
   const raw = event.data.payload as Record<string, unknown>;
 
@@ -456,6 +473,12 @@ function scanPageLocators(): LocatorResult[] {
 
 // Handle scan + highlight requests from the popup (all synchronous)
 chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
+  if (msg.type === 'SET_CAPTURING') {
+    capturing = msg.capturing !== false;
+    sendResponse({ ok: true });
+    return false;
+  }
+
   if (msg.type === 'SCAN_PAGE_LOCATORS') {
     try {
       sendResponse({ ok: true, locators: scanPageLocators() });

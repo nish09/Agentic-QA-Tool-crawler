@@ -2,9 +2,14 @@ import path from 'path';
 import CopyPlugin from 'copy-webpack-plugin';
 import type { Configuration } from 'webpack';
 
+const isProduction = process.env.NODE_ENV === 'production';
+
 const config: Configuration = {
-  mode: process.env.NODE_ENV === 'production' ? 'production' : 'development',
-  devtool: 'cheap-module-source-map',
+  mode: isProduction ? 'production' : 'development',
+  // Ship no source maps in the production (Chrome Web Store) build — they'd
+  // map the published bundle straight back to the original TypeScript,
+  // which is unnecessary disclosure of internal source for a public listing.
+  devtool: isProduction ? false : 'cheap-module-source-map',
 
   // ─── Entry Points ──────────────────────────────────────────────────────────
   // Each entry becomes a separate JS bundle loaded by the extension
