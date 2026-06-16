@@ -11,11 +11,36 @@ let lastUIContext: UIContext = {
   triggerAction: 'load',
 };
 
+// ─── Extension context guard ──────────────────────────────────────────────────
+// When the extension is reloaded/updated (e.g. via chrome://extensions) while a
+// tab still has this content script injected from the OLD extension instance,
+// chrome.runtime becomes invalidated. Calling chrome.runtime.sendMessage then
+// throws "Extension context invalidated" SYNCHRONOUSLY — before a promise even
+// exists — so a trailing .catch() never attaches and it surfaces as an uncaught
+// error in the page console. Guard + try/catch every call site instead.
+
+function isExtensionContextValid(): boolean {
+  try {
+    return !!chrome.runtime?.id;
+  } catch {3
+    return false;
+  }
+}
+
+function safeSendMessage(message: unknown): void {
+  if (!isExtensionContextValid()) return;
+  try {
+    chrome.runtime.sendMessage(message)?.catch(() => {});
+  } catch {
+    // Context was invalidated between the check above and this call — ignore.
+  }
+}
+
 function sendUIContext(context: UIContext): void {
-  chrome.runtime.sendMessage({
+  safeSendMessage({
     type: 'UI_CONTEXT_UPDATE',
     payload: context,
-  }).catch(() => {});
+  });
 }
 
 function getDOMPath(el: Element): string {
@@ -81,7 +106,7 @@ window.addEventListener('message', (event) => {
 
   const raw = event.data.payload as Record<string, unknown>;
 
-  chrome.runtime.sendMessage({
+  safeSendMessage({
     type: 'API_CALL_CAPTURED',
     payload: {
       ...raw,
@@ -92,7 +117,7 @@ window.addEventListener('message', (event) => {
       domPath:       (lastUIContext as UIContext & { domPath?: string }).domPath,
       activeComponent: lastUIContext.activeComponent,
     },
-  }).catch(() => {});
+  });
 });
 
 // ─── Page Locator Scanner ─────────────────────────────────────────────────────

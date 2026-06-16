@@ -10,13 +10,43 @@
  *   API Calls     — live capture list with detail panel, export
  *   Page Locators — on-demand DOM scan generating Playwright + Selenium locators
  */
+// ─── Extension context guard ──────────────────────────────────────────────────
+// If the extension is reloaded/updated (chrome://extensions) while this side
+// panel is still open, chrome.runtime/chrome.tabs become invalidated and calling
+// them throws "Extension context invalidated" SYNCHRONOUSLY — before a promise
+// exists — so a trailing .catch() never attaches. Guard + try/catch instead.
+function isExtensionContextValid() {
+    try {
+        return !!chrome.runtime?.id;
+    }
+    catch {
+        return false;
+    }
+}
+function safeTabsSendMessage(tabId, message, options) {
+    if (!isExtensionContextValid())
+        return Promise.resolve(undefined);
+    try {
+        return chrome.tabs.sendMessage(tabId, message, options ?? {});
+    }
+    catch {
+        return Promise.resolve(undefined);
+    }
+}
+function safeRuntimeSendMessage(message) {
+    if (!isExtensionContextValid())
+        return;
+    try {
+        chrome.runtime.sendMessage(message)?.catch(() => { });
+    }
+    catch {
+        // Context was invalidated between the check above and this call — ignore.
+    }
+}
 // ─── DOM refs ─────────────────────────────────────────────────────────────────
 const pageHostEl = document.getElementById('page-host');
 const statusDotEl = document.getElementById('status-dot');
-const statCapturedNumEl = document.getElementById('stat-captured-num');
-const statDetectedNumEl = document.getElementById('stat-detected-num');
-const statMissedNumEl = document.getElementById('stat-missed-num');
-const statHostsNumEl = document.getElementById('stat-hosts-num');
+const endpointCountEl = document.getElementById('endpoint-count');
 const endpointListEl = document.getElementById('endpoint-list');
 const noDataEl = document.getElementById('no-data');
 const toggleBtn = document.getElementById('toggle-capture');
@@ -30,20 +60,8 @@ const detailPanel = document.getElementById('detail-panel');
 const detailMethod = document.getElementById('detail-method');
 const detailUrl = document.getElementById('detail-url');
 const closeDetail = document.getElementById('close-detail');
-const paneResponse = document.getElementById('pane-response');
-const paneRequest = document.getElementById('pane-request');
-const paneContext = document.getElementById('pane-context');
-const responseBody = document.getElementById('response-body');
-const reqMethod = document.getElementById('req-method');
-const reqUrl = document.getElementById('req-url');
-const reqStatus = document.getElementById('req-status');
-const reqBodyEl = document.getElementById('req-body');
-const reqHeaders = document.getElementById('req-headers');
-const ctxTrigger = document.getElementById('ctx-trigger');
-const ctxElement = document.getElementById('ctx-element');
-const ctxDompath = document.getElementById('ctx-dompath');
-const ctxPage = document.getElementById('ctx-page');
-const ctxComponent = document.getElementById('ctx-component');
+const detailParamsEl = document.getElementById('detail-params');
+const detailHeadersEl = document.getElementById('detail-headers');
 // Locators view
 const locatorsViewEl = document.getElementById('locators-view');
 const scanBtn = document.getElementById('scan-btn');
@@ -56,14 +74,11 @@ let currentTabId = null;
 let currentCalls = [];
 let selectedIdx = null;
 let isCapturing = true;
-let detectedCount = 0;
 let isSettled = false; // true when no new calls for SETTLE_MS after page load
 let currentMode = 'api';
 let allLocators = [];
 let locatorFilter = 'all';
 let locatorFramework = 'both';
-let activeStatView = 'captured';
-let activeHostFilter = null;
 // ─── Init ─────────────────────────────────────────────────────────────────────
 async function init() {
     const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
@@ -88,14 +103,9 @@ async function init() {
     chrome.tabs.onActivated.addListener(async (info) => {
         currentTabId = info.tabId;
         selectedIdx = null;
-        detectedCount = 0;
         currentCalls = [];
         allLocators = [];
         isSettled = false;
-        activeStatView = 'captured';
-        activeHostFilter = null;
-        document.querySelectorAll('.stat-pill').forEach(p => p.classList.remove('active'));
-        document.getElementById('stat-count')?.classList.add('active');
         hideDetail();
         const t = await chrome.tabs.get(info.tabId);
         if (t.url) {
@@ -120,15 +130,10 @@ async function init() {
         if (area !== 'local')
             return;
         const captureKey = `qalens_${currentTabId}`;
-        const detectedKey = `qalens_detected_${currentTabId}`;
         const settledKey = `qalens_settled_${currentTabId}`;
         if (changes[captureKey]) {
             currentCalls = changes[captureKey].newValue ?? [];
             renderList();
-        }
-        if (changes[detectedKey]) {
-            detectedCount = changes[detectedKey].newValue ?? 0;
-            updateVerification();
         }
         if (changes['qalens_capturing']) {
             isCapturing = changes['qalens_capturing'].newValue;
@@ -145,213 +150,73 @@ async function init() {
 // ─── Data loading ─────────────────────────────────────────────────────────────
 async function loadData(tabId) {
     const key = `qalens_${tabId}`;
-    const detKey = `qalens_detected_${tabId}`;
     const settledKey = `qalens_settled_${tabId}`;
-    const result = await chrome.storage.local.get([key, detKey, settledKey]);
+    const result = await chrome.storage.local.get([key, settledKey]);
     currentCalls = Array.isArray(result[key]) ? result[key] : [];
-    detectedCount = typeof result[detKey] === 'number' ? result[detKey] : 0;
     isSettled = result[settledKey] === true;
     renderList();
     updateStatusDot();
     updateToggleBtn();
 }
-// ─── Render API list ──────────────────────────────────────────────────────────
-function updateVerification() {
-    const missed = Math.max(0, detectedCount - currentCalls.length);
-    statDetectedNumEl.textContent = String(detectedCount);
-    statMissedNumEl.textContent = String(missed);
-    const missedBtn = document.getElementById('stat-missed');
-    if (missedBtn) {
-        if (missed > 0) {
-            missedBtn.classList.remove('hidden');
-            missedBtn.classList.add('warn');
+function dedupeEndpoints(calls) {
+    const ordered = calls
+        .map((call, idx) => ({ call, idx }))
+        .sort((a, b) => b.call.timestamp - a.call.timestamp);
+    const seen = new Set();
+    const result = [];
+    for (const entry of ordered) {
+        let key;
+        try {
+            const u = new URL(entry.call.url);
+            key = `${entry.call.method}::${u.origin}${u.pathname}`;
         }
-        else {
-            missedBtn.classList.add('hidden');
-            missedBtn.classList.remove('warn');
-            if (activeStatView === 'missed') {
-                activeStatView = 'captured';
-                document.querySelectorAll('.stat-pill').forEach(p => p.classList.remove('active'));
-                document.getElementById('stat-count')?.classList.add('active');
-                renderStatView();
-            }
+        catch {
+            key = `${entry.call.method}::${entry.call.url}`;
         }
+        if (seen.has(key))
+            continue;
+        seen.add(key);
+        result.push(entry);
     }
+    return result;
 }
 function renderList() {
-    const hosts = new Set(currentCalls.map(c => { try {
-        return new URL(c.url).hostname;
-    }
-    catch {
-        return '?';
-    } }));
-    statCapturedNumEl.textContent = String(currentCalls.length);
-    statHostsNumEl.textContent = String(hosts.size);
-    updateVerification();
-    renderStatView();
-}
-function renderStatView() {
-    switch (activeStatView) {
-        case 'captured':
-            renderCapturedList(null);
-            break;
-        case 'host':
-            if (activeHostFilter)
-                renderCapturedList(activeHostFilter);
-            else
-                renderHostBreakdown();
-            break;
-        case 'detected':
-            renderEndpointSummary(currentCalls, `${currentCalls.length} of ${detectedCount} detected`);
-            break;
-        case 'missed': {
-            const missed = Math.max(0, detectedCount - currentCalls.length);
-            renderInfoPanel(missed > 0 ? `${missed} call${missed !== 1 ? 's' : ''} not captured` : 'All calls captured', missed > 0
-                ? `${missed} request${missed !== 1 ? 's' : ''} were detected at the network layer but fired before the extension was ready — no endpoint details available.`
-                : 'Every detected API call was successfully captured.', missed > 0 ? 'warn' : 'ok');
-            break;
-        }
-    }
-}
-function renderCapturedList(hostFilter) {
     noDataEl.classList.add('hidden');
     [...endpointListEl.children].forEach(c => { if (c !== noDataEl)
         c.remove(); });
-    const calls = hostFilter
-        ? currentCalls.filter(c => { try {
-            return new URL(c.url).hostname === hostFilter;
-        }
-        catch {
-            return false;
-        } })
-        : currentCalls;
-    if (hostFilter) {
-        const crumb = document.createElement('div');
-        crumb.className = 'host-crumb';
-        crumb.innerHTML = `<button class="crumb-back">← Hosts</button><span>${escHtml(hostFilter)} · ${calls.length} call${calls.length !== 1 ? 's' : ''}</span>`;
-        crumb.querySelector('.crumb-back')?.addEventListener('click', () => {
-            activeHostFilter = null;
-            renderStatView();
-        });
-        endpointListEl.appendChild(crumb);
-    }
-    if (calls.length === 0) {
-        noDataEl.classList.remove('hidden');
-        return;
-    }
-    const sorted = calls
-        .map(c => ({ c, i: currentCalls.indexOf(c) }))
-        .sort((a, b) => b.c.timestamp - a.c.timestamp);
-    const fragment = document.createDocumentFragment();
-    sorted.forEach(({ c, i }) => {
-        const div = document.createElement('div');
-        div.className = 'ep-row' + (selectedIdx === i ? ' selected' : '');
-        div.dataset['idx'] = String(i);
-        let path;
-        try {
-            const u = new URL(c.url);
-            path = u.pathname + (u.search.length > 1 ? u.search.slice(0, 20) + (u.search.length > 20 ? '…' : '') : '');
-        }
-        catch {
-            path = c.url;
-        }
-        if (path.length > 52)
-            path = path.slice(0, 52) + '…';
-        const sc = c.responseStatus;
-        const scCls = sc >= 500 ? 'err' : sc >= 400 ? 'warn' : 'ok';
-        const trig = c.triggerAction ?? 'unknown';
-        const trigCls = ['load', 'click', 'input', 'scroll', 'hover'].includes(trig) ? trig : 'unknown';
-        div.innerHTML = `
-      <span class="method m-${c.method.toLowerCase()}">${c.method}</span>
-      <span class="path" title="${escHtml(c.url)}">${escHtml(path)}</span>
-      <span class="sc sc-${scCls}">${sc}</span>
-      <span class="trig t-${trigCls}">${trigCls}</span>`;
-        div.addEventListener('click', () => showDetail(i));
-        fragment.appendChild(div);
-    });
-    endpointListEl.appendChild(fragment);
-}
-function renderHostBreakdown() {
-    hideDetail();
-    noDataEl.classList.add('hidden');
-    [...endpointListEl.children].forEach(c => { if (c !== noDataEl)
-        c.remove(); });
+    const deduped = dedupeEndpoints(currentCalls);
+    endpointCountEl.textContent = `${deduped.length} endpoint${deduped.length !== 1 ? 's' : ''}`;
     if (currentCalls.length === 0) {
         noDataEl.classList.remove('hidden');
         return;
     }
-    const hostMap = new Map();
-    currentCalls.forEach(c => {
-        try {
-            const h = new URL(c.url).hostname;
-            hostMap.set(h, (hostMap.get(h) ?? 0) + 1);
-        }
-        catch { /* skip */ }
-    });
     const fragment = document.createDocumentFragment();
-    [...hostMap.entries()]
-        .sort((a, b) => b[1] - a[1])
-        .forEach(([host, count]) => {
-        const row = document.createElement('div');
-        row.className = 'host-row';
-        row.innerHTML = `<span class="host-name">${escHtml(host)}</span><span class="host-count">${count} call${count !== 1 ? 's' : ''}</span>`;
-        row.addEventListener('click', () => {
-            activeHostFilter = host;
-            renderStatView();
-        });
-        fragment.appendChild(row);
-    });
-    endpointListEl.appendChild(fragment);
-}
-function renderEndpointSummary(calls, subtitle) {
-    hideDetail();
-    noDataEl.classList.add('hidden');
-    [...endpointListEl.children].forEach(c => { if (c !== noDataEl)
-        c.remove(); });
-    const header = document.createElement('div');
-    header.className = 'summary-header';
-    header.textContent = subtitle;
-    endpointListEl.appendChild(header);
-    if (calls.length === 0) {
-        const empty = document.createElement('div');
-        empty.className = 'summary-empty';
-        empty.textContent = 'No calls captured yet.';
-        endpointListEl.appendChild(empty);
-        return;
-    }
-    const fragment = document.createDocumentFragment();
-    [...calls].sort((a, b) => b.timestamp - a.timestamp).forEach(c => {
+    deduped.forEach(({ call, idx }) => {
         const div = document.createElement('div');
-        div.className = 'ep-row ep-readonly';
+        div.className = 'ep-row' + (selectedIdx === idx ? ' selected' : '');
+        div.dataset['idx'] = String(idx);
         let path;
         try {
-            const u = new URL(c.url);
-            path = u.pathname + (u.search.length > 1 ? u.search.slice(0, 20) + (u.search.length > 20 ? '…' : '') : '');
+            path = new URL(call.url).pathname || '/';
         }
         catch {
-            path = c.url;
+            path = call.url;
         }
-        if (path.length > 52)
-            path = path.slice(0, 52) + '…';
-        const sc = c.responseStatus;
-        const scCls = sc >= 500 ? 'err' : sc >= 400 ? 'warn' : 'ok';
+        if (path.length > 56)
+            path = path.slice(0, 56) + '…';
+        const isErr = call.error != null || call.responseStatus === 0;
+        const scLabel = isErr ? 'ERR' : String(call.responseStatus);
+        const scCls = isErr ? 'err' : call.responseStatus >= 500 ? 'err' : call.responseStatus >= 400 ? 'warn' : 'ok';
+        const time = typeof call.time === 'number' ? `${call.time}ms` : '—';
         div.innerHTML = `
-      <span class="method m-${c.method.toLowerCase()}">${c.method}</span>
-      <span class="path" title="${escHtml(c.url)}">${escHtml(path)}</span>
-      <span class="sc sc-${scCls}">${sc}</span>`;
+      <span class="method m-${call.method.toLowerCase()}">${escHtml(call.method)}</span>
+      <span class="path" title="${escHtml(call.url)}">${escHtml(path)}</span>
+      <span class="sc sc-${scCls}">${escHtml(scLabel)}</span>
+      <span class="time">${time}</span>`;
+        div.addEventListener('click', () => showDetail(idx));
         fragment.appendChild(div);
     });
     endpointListEl.appendChild(fragment);
-}
-function renderInfoPanel(title, body, type = 'info') {
-    hideDetail();
-    noDataEl.classList.add('hidden');
-    [...endpointListEl.children].forEach(c => { if (c !== noDataEl)
-        c.remove(); });
-    const panel = document.createElement('div');
-    panel.className = `info-panel ip-${type}`;
-    panel.innerHTML = `<strong class="ip-title">${escHtml(title)}</strong><p class="ip-body">${escHtml(body)}</p>`;
-    endpointListEl.appendChild(panel);
 }
 // ─── Detail panel ─────────────────────────────────────────────────────────────
 function showDetail(idx) {
@@ -366,33 +231,20 @@ function showDetail(idx) {
     detailMethod.className = `method m-${call.method.toLowerCase()}`;
     detailUrl.textContent = call.url;
     detailUrl.title = call.url;
-    if (call.responseBody != null) {
-        responseBody.textContent = typeof call.responseBody === 'string'
-            ? call.responseBody
-            : JSON.stringify(call.responseBody, null, 2);
+    let params = [];
+    try {
+        params = [...new URL(call.url).searchParams.entries()];
     }
-    else {
-        responseBody.textContent = '(no body)';
-    }
-    reqMethod.textContent = call.method;
-    reqUrl.textContent = call.url;
-    reqStatus.textContent = String(call.responseStatus);
-    reqBodyEl.textContent = call.requestBody != null
-        ? (typeof call.requestBody === 'string' ? call.requestBody : JSON.stringify(call.requestBody, null, 2))
-        : '—';
-    reqHeaders.textContent = call.requestHeaders
-        ? Object.entries(call.requestHeaders).map(([k, v]) => `${k}: ${v}`).join('\n')
-        : '—';
-    const trig = call.triggerAction ?? 'unknown';
-    const trigCls = ['load', 'click', 'input', 'scroll', 'hover'].includes(trig) ? trig : 'unknown';
-    ctxTrigger.innerHTML = `<span class="trig-badge t-${trigCls}">${trig}</span>`;
-    ctxElement.textContent = call.triggerElement ?? '—';
-    ctxDompath.textContent = call.domPath ?? '—';
-    ctxPage.textContent = call.pageUrl ?? '—';
-    ctxComponent.textContent = call.activeComponent ?? '—';
+    catch { /* not a valid URL */ }
+    detailParamsEl.innerHTML = params.length
+        ? params.map(([k, v]) => `<tr><td class="dt-label">${escHtml(k)}</td><td class="dt-val mono">${escHtml(v)}</td></tr>`).join('')
+        : `<tr><td class="dt-val" colspan="2">(none)</td></tr>`;
+    const headers = call.requestHeaders ? Object.entries(call.requestHeaders) : [];
+    detailHeadersEl.innerHTML = headers.length
+        ? headers.map(([k, v]) => `<tr><td class="dt-label">${escHtml(k)}</td><td class="dt-val mono">${escHtml(v)}</td></tr>`).join('')
+        : `<tr><td class="dt-val" colspan="2">(none)</td></tr>`;
     detailPanel.classList.remove('hidden');
     appEl.classList.add('detail-open');
-    activateTab('response');
 }
 function hideDetail() {
     selectedIdx = null;
@@ -400,19 +252,6 @@ function hideDetail() {
     appEl.classList.remove('detail-open');
     endpointListEl.querySelectorAll('.ep-row').forEach(r => r.classList.remove('selected'));
 }
-// ─── API detail tabs ──────────────────────────────────────────────────────────
-function activateTab(name) {
-    document.querySelectorAll('#detail-tabs .tab-btn').forEach(b => {
-        b.classList.toggle('active', b.dataset['tab'] === name);
-    });
-    [paneResponse, paneRequest, paneContext].forEach(p => p.classList.add('hidden'));
-    document.getElementById(`pane-${name}`)?.classList.remove('hidden');
-}
-document.querySelectorAll('#detail-tabs .tab-btn').forEach(btn => {
-    btn.addEventListener('click', () => {
-        activateTab(btn.dataset['tab'] ?? 'response');
-    });
-});
 // ─── Mode switching ───────────────────────────────────────────────────────────
 function switchMode(mode) {
     currentMode = mode;
@@ -427,7 +266,7 @@ function switchMode(mode) {
             const fids = new Set(allLocators.map(l => l.frameId ?? 0));
             if (fids.size === 0)
                 fids.add(0);
-            fids.forEach(fid => chrome.tabs.sendMessage(currentTabId, { type: 'CLEAR_HIGHLIGHT' }, { frameId: fid }).catch(() => { }));
+            fids.forEach(fid => safeTabsSendMessage(currentTabId, { type: 'CLEAR_HIGHLIGHT' }, { frameId: fid }));
         }
     }
     else {
@@ -462,7 +301,7 @@ async function scanLocators() {
         // Collect results from ALL frames (top frame + iframes like embedded ATS forms)
         const frames = await chrome.webNavigation.getAllFrames({ tabId: currentTabId }) ?? [];
         const frameIds = frames.map(f => f.frameId);
-        const perFrame = await Promise.allSettled(frameIds.map(frameId => chrome.tabs.sendMessage(currentTabId, { type: 'SCAN_PAGE_LOCATORS' }, { frameId })
+        const perFrame = await Promise.allSettled(frameIds.map(frameId => safeTabsSendMessage(currentTabId, { type: 'SCAN_PAGE_LOCATORS' }, { frameId })
             .then(r => ({ ...r, frameId }))
             .catch(() => ({ ok: false, locators: [], frameId }))));
         const merged = [];
@@ -573,13 +412,13 @@ function renderLocators() {
                 if (!currentTabId)
                     return;
                 const opts = loc.frameId !== undefined ? { frameId: loc.frameId } : {};
-                chrome.tabs.sendMessage(currentTabId, { type: 'HIGHLIGHT_LOCATOR', uid: loc.localUid ?? loc.uid }, opts).catch(() => { });
+                safeTabsSendMessage(currentTabId, { type: 'HIGHLIGHT_LOCATOR', uid: loc.localUid ?? loc.uid }, opts);
             });
             item.addEventListener('mouseleave', () => {
                 if (!currentTabId)
                     return;
                 const opts = loc.frameId !== undefined ? { frameId: loc.frameId } : {};
-                chrome.tabs.sendMessage(currentTabId, { type: 'CLEAR_HIGHLIGHT' }, opts).catch(() => { });
+                safeTabsSendMessage(currentTabId, { type: 'CLEAR_HIGHLIGHT' }, opts);
             });
             fragment.appendChild(item);
         });
@@ -636,20 +475,6 @@ fwSelectEl.addEventListener('change', () => {
     if (allLocators.length > 0)
         renderLocators();
 });
-// Stat pill clicks → switch view
-document.getElementById('stats-row')?.addEventListener('click', (e) => {
-    const pill = e.target.closest('.stat-pill');
-    if (!pill)
-        return;
-    const stat = pill.dataset['stat'];
-    if (!stat)
-        return;
-    activeStatView = stat;
-    activeHostFilter = null;
-    document.querySelectorAll('.stat-pill').forEach(p => p.classList.remove('active'));
-    pill.classList.add('active');
-    renderStatView();
-});
 // ─── Status / capture toggle ──────────────────────────────────────────────────
 function updateStatusDot() {
     if (!isCapturing) {
@@ -686,7 +511,7 @@ toggleBtn.addEventListener('click', async () => {
         updateStatusDot();
         updateToggleBtn();
         if (currentTabId !== null) {
-            chrome.runtime.sendMessage({ type: 'RECHECK_SETTLE', tabId: currentTabId }).catch(() => { });
+            safeRuntimeSendMessage({ type: 'RECHECK_SETTLE', tabId: currentTabId });
         }
         return;
     }
@@ -698,50 +523,49 @@ toggleBtn.addEventListener('click', async () => {
 clearBtn.addEventListener('click', async () => {
     if (currentTabId === null)
         return;
-    await chrome.storage.local.remove([
-        `qalens_${currentTabId}`,
-        `qalens_detected_${currentTabId}`,
-    ]);
+    await chrome.storage.local.remove([`qalens_${currentTabId}`]);
     currentCalls = [];
-    detectedCount = 0;
-    activeStatView = 'captured';
-    activeHostFilter = null;
-    document.querySelectorAll('.stat-pill').forEach(p => p.classList.remove('active'));
-    document.getElementById('stat-count')?.classList.add('active');
     hideDetail();
     renderList();
 });
 // ─── Detail close ─────────────────────────────────────────────────────────────
 closeDetail.addEventListener('click', hideDetail);
-// ─── Export ───────────────────────────────────────────────────────────────────
-function exportCSV() {
-    const hdr = ['Method', 'URL', 'Status', 'Trigger', 'Element', 'DOM Path', 'Page', 'Timestamp'];
-    const rows = currentCalls.map(c => [
-        c.method, c.url, c.responseStatus,
-        c.triggerAction ?? '', c.triggerElement ?? '', c.domPath ?? '',
-        c.pageUrl ?? '', new Date(c.timestamp).toISOString(),
-    ]);
-    download([hdr, ...rows].map(r => r.map(v => `"${String(v).replace(/"/g, '""')}"`).join(',')).join('\n'), 'qalens.csv', 'text/csv');
+function buildExportRows() {
+    return dedupeEndpoints(currentCalls).map(({ call }) => ({
+        method: call.method,
+        url: call.url,
+        status: call.error != null || call.responseStatus === 0 ? 'ERR' : call.responseStatus,
+        time: typeof call.time === 'number' ? call.time : '',
+    }));
 }
-function exportJSON() {
-    download(JSON.stringify(currentCalls, null, 2), 'qalens.json', 'application/json');
+async function copyCSV() {
+    const rows = buildExportRows();
+    const hdr = ['method', 'full_url', 'status', 'time'];
+    const csv = [hdr, ...rows.map(r => [r.method, r.url, r.status, r.time])]
+        .map(r => r.map(v => `"${String(v).replace(/"/g, '""')}"`).join(','))
+        .join('\n');
+    await copyText(csv);
+    flashCopied(exportCsvEl, '⎘ Copy CSV');
 }
-function download(content, filename, mime) {
-    const blob = new Blob([content], { type: mime });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = filename;
-    a.click();
-    URL.revokeObjectURL(url);
+async function copyJSON() {
+    await copyText(JSON.stringify(buildExportRows(), null, 2));
+    flashCopied(exportJsonEl, '⎘ Copy JSON');
+}
+function flashCopied(btn, restoreText) {
+    btn.textContent = '✓ Copied';
+    btn.disabled = true;
+    setTimeout(() => {
+        btn.textContent = restoreText;
+        btn.disabled = false;
+    }, 1500);
 }
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 function escHtml(s) {
     return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 }
 // ─── Wire events ─────────────────────────────────────────────────────────────
-exportCsvEl.addEventListener('click', exportCSV);
-exportJsonEl.addEventListener('click', exportJSON);
+exportCsvEl.addEventListener('click', () => copyCSV().catch(console.error));
+exportJsonEl.addEventListener('click', () => copyJSON().catch(console.error));
 init().catch(console.error);
 
 /******/ })()

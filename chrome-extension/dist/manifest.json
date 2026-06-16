@@ -13,6 +13,10 @@
     "webNavigation"
   ],
 
+  "host_permissions": [
+    "<all_urls>"
+  ],
+
   "side_panel": {
     "default_path": "popup.html"
   },
@@ -33,7 +37,7 @@
     {
       "matches": ["<all_urls>"],
       "js": ["content.js"],
-      "run_at": "document_idle",
+      "run_at": "document_start",
       "all_frames": true
     }
   ],

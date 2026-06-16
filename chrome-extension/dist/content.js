@@ -30,11 +30,36 @@ let lastUIContext = {
     pageUrl: window.location.href,
     triggerAction: 'load',
 };
+// ─── Extension context guard ──────────────────────────────────────────────────
+// When the extension is reloaded/updated (e.g. via chrome://extensions) while a
+// tab still has this content script injected from the OLD extension instance,
+// chrome.runtime becomes invalidated. Calling chrome.runtime.sendMessage then
+// throws "Extension context invalidated" SYNCHRONOUSLY — before a promise even
+// exists — so a trailing .catch() never attaches and it surfaces as an uncaught
+// error in the page console. Guard + try/catch every call site instead.
+function isExtensionContextValid() {
+    try {
+        return !!chrome.runtime?.id;
+    }
+    catch {
+        return false;
+    }
+}
+function safeSendMessage(message) {
+    if (!isExtensionContextValid())
+        return;
+    try {
+        chrome.runtime.sendMessage(message)?.catch(() => { });
+    }
+    catch {
+        // Context was invalidated between the check above and this call — ignore.
+    }
+}
 function sendUIContext(context) {
-    chrome.runtime.sendMessage({
+    safeSendMessage({
         type: 'UI_CONTEXT_UPDATE',
         payload: context,
-    }).catch(() => { });
+    });
 }
 function getDOMPath(el) {
     const parts = [];
@@ -94,7 +119,7 @@ window.addEventListener('message', (event) => {
     if (event.data?.type !== 'QALENS_CALL')
         return;
     const raw = event.data.payload;
-    chrome.runtime.sendMessage({
+    safeSendMessage({
         type: 'API_CALL_CAPTURED',
         payload: {
             ...raw,
@@ -105,7 +130,7 @@ window.addEventListener('message', (event) => {
             domPath: lastUIContext.domPath,
             activeComponent: lastUIContext.activeComponent,
         },
-    }).catch(() => { });
+    });
 });
 // ─── Hover-to-highlight ───────────────────────────────────────────────────────
 // Maps uid strings to the actual DOM elements captured during the last scan.
