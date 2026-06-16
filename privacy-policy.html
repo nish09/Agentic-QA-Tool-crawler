@@ -1,0 +1,101 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<title>QALens — Privacy Policy</title>
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<style>
+  body { font-family: -apple-system, Segoe UI, Roboto, Arial, sans-serif; max-width: 720px; margin: 40px auto; padding: 0 20px; line-height: 1.6; color: #1a1a1a; }
+  h1 { font-size: 1.6em; }
+  h2 { font-size: 1.2em; margin-top: 1.8em; border-bottom: 1px solid #e5e5e5; padding-bottom: 4px; }
+  code { background: #f3f3f3; padding: 1px 5px; border-radius: 3px; font-size: 0.9em; }
+  .updated { color: #666; font-size: 0.9em; }
+  ul { padding-left: 1.3em; }
+</style>
+</head>
+<body>
+
+<h1>QALens — Privacy Policy</h1>
+<p class="updated">Last updated: <!-- TODO: set actual publish date --> 16 June 2026</p>
+
+<p>QALens is a Chrome extension built for QA Engineers and Business Analysts to
+discover the API calls a web application makes and generate test-automation
+locators (Playwright/Selenium). This page explains exactly what data QALens
+accesses, what it does with it, and what it never does.</p>
+
+<h2>Everything stays on your device</h2>
+<p>QALens has <strong>no backend server</strong>. It never sends any data it
+captures — network requests, page content, or generated locators — anywhere
+over the network. Everything is stored locally in your browser using the
+<code>chrome.storage.local</code> API and is only ever read by QALens itself,
+on your own machine.</p>
+
+<h2>What QALens captures</h2>
+<p>While you're browsing with the side panel open, QALens observes the network
+requests made by the current tab and records, per request:</p>
+<ul>
+  <li>HTTP method, full URL, response status code, and response time</li>
+  <li>Request and response headers</li>
+  <li>Request and response bodies (for JSON payloads)</li>
+</ul>
+
+<h2>Sensitive data is redacted before it's ever stored</h2>
+<p>QALens automatically redacts likely-sensitive values <strong>before</strong>
+anything is written to storage — the header or field name is kept (so you can
+still see, for example, that an endpoint uses an <code>Authorization</code>
+header, which is useful for API mapping) but the value is replaced with
+<code>[redacted]</code>. This applies to:</p>
+<ul>
+  <li>Headers: <code>Authorization</code>, <code>Cookie</code>,
+      <code>Set-Cookie</code>, <code>Proxy-Authorization</code>,
+      <code>X-Api-Key</code>, <code>X-Auth-Token</code>, <code>Api-Key</code>,
+      <code>X-Csrf-Token</code></li>
+  <li>JSON body fields named (case-insensitive): <code>password</code>,
+      <code>token</code>, <code>secret</code>, <code>apiKey</code>,
+      <code>accessToken</code>, <code>refreshToken</code>,
+      <code>authorization</code>, <code>ssn</code>, <code>cardNumber</code>,
+      <code>cvv</code></li>
+</ul>
+
+<h2>How long data is kept</h2>
+<ul>
+  <li>Each tab's captured calls are capped at 300 entries — once exceeded, the
+      oldest entries are dropped automatically.</li>
+  <li>A tab's data is cleared automatically when you navigate to a new page or
+      close the tab.</li>
+  <li>You can clear all captured data for the current tab at any time with the
+      "Clear" button in the panel.</li>
+  <li>Pausing capture (the "Pause" button) stops QALens from observing
+      requests at all — nothing is captured or relayed internally while
+      paused.</li>
+</ul>
+
+<h2>Why QALens needs the permissions it requests</h2>
+<ul>
+  <li><strong>Host access to all sites</strong> — QALens's entire purpose is
+      to map APIs on whatever site you're testing, which can't be known in
+      advance.</li>
+  <li><strong><code>webRequest</code></strong> — used only to observe request
+      metadata (never to block or modify traffic); it catches requests that
+      fire before the page finishes loading and network errors that other
+      methods can't see.</li>
+  <li><strong><code>tabs</code> / <code>activeTab</code></strong> — used only
+      to know which tab the open side panel should display data for.</li>
+  <li><strong><code>storage</code></strong> — local persistence of captured
+      data, described above.</li>
+  <li><strong><code>sidePanel</code></strong> — the UI surface itself.</li>
+  <li><strong><code>webNavigation</code></strong> — used to clear a tab's data
+      when you navigate to a new page.</li>
+</ul>
+
+<h2>Data sharing</h2>
+<p>QALens does not sell, rent, or share any captured data with any third
+party, for any purpose. There is no analytics, telemetry, or crash-reporting
+SDK in the extension.</p>
+
+<h2>Contact</h2>
+<p><!-- TODO: confirm/replace contact email before publishing --> Questions
+about this policy or QALens's data handling: <code>YOUR-CONTACT-EMAIL-HERE</code></p>
+
+</body>
+</html>
