@@ -1,0 +1,32 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" width="256" height="256">
+  <title>QAlens Logo - Black Square Purple Lens</title>
+  <desc>Bold black square badge with soft purple lens QAlens Chrome extension logo</desc>
+
+  <!-- Square black badge -->
+  <rect x="0" y="0" width="256" height="256" rx="32" fill="#111111"/>
+  <rect x="3" y="3" width="250" height="250" rx="30" fill="none" stroke="#a78bfa" stroke-width="1.5" opacity="0.4"/>
+
+  <!-- Lens body -->
+  <circle cx="118" cy="114" r="76" fill="#ffffff" opacity="0.95"/>
+  <circle cx="118" cy="114" r="76" fill="none" stroke="#a78bfa" stroke-width="7"/>
+
+  <!-- Inner lens ring -->
+  <circle cx="118" cy="114" r="58" fill="#f5f3ff" opacity="0.5"/>
+  <circle cx="118" cy="114" r="58" fill="none" stroke="#7c3aed" stroke-width="2"/>
+
+  <!-- Shine highlight -->
+  <circle cx="96" cy="92" r="15" fill="#ede9fe" opacity="0.6"/>
+
+  <!-- QA text -->
+  <text x="118" y="106" text-anchor="middle" font-family="Arial, sans-serif" font-size="30" font-weight="700" fill="#4c1d95" letter-spacing="1">QA</text>
+
+  <!-- LENS text -->
+  <text x="118" y="134" text-anchor="middle" font-family="Arial, sans-serif" font-size="16" font-weight="700" fill="#7c3aed" letter-spacing="4">LENS</text>
+
+  <!-- Checkmark -->
+  <polyline points="96,112 112,128 144,98" fill="none" stroke="#7c3aed" stroke-width="5.5" stroke-linecap="round" stroke-linejoin="round" opacity="0.85"/>
+
+  <!-- Handle -->
+  <line x1="180" y1="172" x2="220" y2="214" stroke="#a78bfa" stroke-width="11" stroke-linecap="round"/>
+  <line x1="216" y1="210" x2="232" y2="228" stroke="#7c3aed" stroke-width="7" stroke-linecap="round" opacity="0.5"/>
+</svg>

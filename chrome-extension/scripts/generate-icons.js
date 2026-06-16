@@ -1,7 +1,12 @@
 'use strict';
 /**
- * Generates minimal valid PNG icon files for the Chrome extension.
- * Uses only Node.js built-ins — no extra dependencies required.
+ * Ensures public/icons/iconNN.png exist before the build runs.
+ *
+ * The real icons (rasterized from assets/icon.svg) are checked into the repo
+ * under public/icons/, so normally this is a no-op. If they're ever missing
+ * (e.g. a fresh checkout before they're committed), it falls back to drawing
+ * minimal placeholder PNGs using only Node.js built-ins — no extra
+ * dependencies required — so the build never breaks for lack of icons.
  */
 
 const zlib = require('zlib');
@@ -72,10 +77,21 @@ function createPNG(size, r, g, b) {
 const iconsDir = path.join(__dirname, '..', 'public', 'icons');
 fs.mkdirSync(iconsDir, { recursive: true });
 
+const sizes = [16, 32, 48, 128];
+
+// The real QALens logo (assets/icon.svg, rasterized to public/icons/iconNN.png)
+// is checked into the repo — don't clobber it with the placeholder generator
+// below. This only fires for a fresh checkout that's somehow missing an icon.
+const allPresent = sizes.every(size => fs.existsSync(path.join(iconsDir, `icon${size}.png`)));
+if (allPresent) {
+  console.log('Icons already present — skipping placeholder generation.');
+  process.exit(0);
+}
+
 // Brand color: indigo #6366f1
 const [R, G, B] = [0x63, 0x66, 0xf1];
 
-for (const size of [16, 32, 48, 128]) {
+for (const size of sizes) {
   fs.writeFileSync(path.join(iconsDir, `icon${size}.png`), createPNG(size, R, G, B));
   console.log(`  ✓ icon${size}.png`);
 }

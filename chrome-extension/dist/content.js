@@ -42,6 +42,7 @@ function isExtensionContextValid() {
         return !!chrome.runtime?.id;
     }
     catch {
+        3;
         return false;
     }
 }
