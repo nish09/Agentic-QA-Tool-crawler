@@ -1,8 +1,11 @@
+import JSZip from 'jszip';
+
 /**
  * popup.ts — Extension side panel UI.
- * Two views:
+ * Three views:
  *   API Calls     — live capture list with detail panel, export
  *   Page Locators — on-demand DOM scan generating Playwright + Selenium locators
+ *   Crawler       — navigates pages, captures DOM, exports ZIP for test generation
  */
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -37,6 +40,24 @@ interface LocatorResult {
   playwright: string[];
   selenium: string[];
 }
+
+interface CrawledPage {
+  url: string;
+  title: string;
+  dom: string;
+  links: string[];
+  elements: Record<string, string>[];
+  timestamp: number;
+  index: number;
+}
+
+type CrawlResponse = {
+  ok: boolean;
+  dom?: string;
+  title?: string;
+  links?: string[];
+  elements?: Record<string, string>[];
+};
 
 // ─── Extension context guard ──────────────────────────────────────────────────
 // If the extension is reloaded/updated (chrome://extensions) while this side
@@ -104,6 +125,24 @@ const locListEl      = document.getElementById('loc-list')      as HTMLDivElemen
 const locEmptyEl     = document.getElementById('loc-empty')     as HTMLDivElement;
 const fwSelectEl     = document.getElementById('fw-select')     as HTMLSelectElement;
 
+// Crawler view
+const crawlerViewEl    = document.getElementById('crawler-view')       as HTMLDivElement;
+const crawlStartBtn    = document.getElementById('crawl-start-btn')    as HTMLButtonElement;
+const crawlProgressEl  = document.getElementById('crawler-progress')   as HTMLDivElement;
+const crawlStatusEl    = document.getElementById('crawl-status-text')  as HTMLDivElement;
+const crawlVisitedEl   = document.getElementById('crawl-visited')      as HTMLSpanElement;
+const crawlQueuedEl    = document.getElementById('crawl-queued')       as HTMLSpanElement;
+const crawlFillEl      = document.getElementById('crawl-progress-fill') as HTMLDivElement;
+const crawlPageListEl  = document.getElementById('crawl-page-list')    as HTMLDivElement;
+const crawlEmptyEl     = document.getElementById('crawl-empty')        as HTMLDivElement;
+const crawlerActionsEl   = document.getElementById('crawler-actions')      as HTMLDivElement;
+const crawlDownloadBtn   = document.getElementById('crawl-download-btn')  as HTMLButtonElement;
+const crawlMaxPagesEl    = document.getElementById('crawl-max-pages')     as HTMLSelectElement;
+const crawlMaxPagesWrapEl= document.getElementById('crawl-max-pages-wrap')as HTMLLabelElement;
+const crawlModeHintEl    = document.getElementById('crawl-mode-hint')     as HTMLDivElement;
+const crawlEmptyHintEl   = document.getElementById('crawl-empty-hint')    as HTMLParagraphElement;
+const actionsBarEl       = document.getElementById('actions')             as HTMLDivElement;
+
 // ─── State ────────────────────────────────────────────────────────────────────
 
 let currentTabId: number | null = null;
@@ -113,10 +152,21 @@ let isCapturing = true;
 
 let isSettled = false; // true when no new calls for SETTLE_MS after page load
 
-let currentMode: 'api' | 'locators' = 'api';
+let currentMode: 'api' | 'locators' | 'crawler' = 'api';
 let allLocators: LocatorResult[] = [];
 let locatorFilter = 'all';
 let locatorFramework = 'both';
+
+let crawlerPages: CrawledPage[] = [];
+let crawlerRunning = false;
+let crawlerAborted = false;
+let crawlMode: 'auto' | 'manual' = 'auto';
+let manualCrawlListener: ((tabId: number, info: chrome.tabs.TabChangeInfo) => void) | null = null;
+let newTabCreatedListener: ((tab: chrome.tabs.Tab) => void) | null = null;
+let newTabRemovedListener: ((tabId: number) => void) | null = null;
+let trackedChildTabs   = new Set<number>();
+let capturedUrls       = new Set<string>();
+let manualCrawlOriginTabId: number | null = null;
 
 // ─── Init ─────────────────────────────────────────────────────────────────────
 
@@ -144,6 +194,25 @@ async function init(): Promise<void> {
 
   // Switch data when the user changes tabs
   chrome.tabs.onActivated.addListener(async (info) => {
+    // Abort any running crawl when the user switches to a different tab
+    if (crawlerRunning) {
+      if (crawlMode === 'manual') {
+        // Allow switching between the origin tab and tracked child tabs
+        const isRelated = info.tabId === manualCrawlOriginTabId || trackedChildTabs.has(info.tabId);
+        if (!isRelated) {
+          stopManualCrawl();
+          crawlStatusEl.textContent = 'Stopped — navigated to unrelated tab';
+        }
+      } else {
+        crawlerAborted = true;
+        crawlerRunning = false;
+        crawlStartBtn.textContent = '▶ Start Crawl';
+        crawlStartBtn.disabled = false;
+        crawlStartBtn.classList.remove('stopping');
+        crawlStatusEl.textContent = 'Stopped — tab switched';
+      }
+    }
+
     currentTabId = info.tabId;
     selectedIdx = null;
     currentCalls = [];
@@ -316,34 +385,34 @@ function hideDetail(): void {
 
 // ─── Mode switching ───────────────────────────────────────────────────────────
 
-function switchMode(mode: 'api' | 'locators'): void {
+function switchMode(mode: 'api' | 'locators' | 'crawler'): void {
   currentMode = mode;
 
   document.querySelectorAll('.mode-tab').forEach(btn => {
     btn.classList.toggle('active', (btn as HTMLElement).dataset['mode'] === mode);
   });
 
+  apiViewEl.classList.toggle('hidden', mode !== 'api');
+  locatorsViewEl.classList.toggle('hidden', mode !== 'locators');
+  crawlerViewEl.classList.toggle('hidden', mode !== 'crawler');
+  actionsBarEl.classList.toggle('hidden', mode === 'crawler');
+
   if (mode === 'api') {
-    apiViewEl.classList.remove('hidden');
-    locatorsViewEl.classList.add('hidden');
     if (currentTabId !== null) {
-      // Clear highlight in every frame that was scanned
       const fids = new Set(allLocators.map(l => l.frameId ?? 0));
       if (fids.size === 0) fids.add(0);
       fids.forEach(fid =>
         safeTabsSendMessage(currentTabId!, { type: 'CLEAR_HIGHLIGHT' }, { frameId: fid })
       );
     }
-  } else {
-    apiViewEl.classList.add('hidden');
-    locatorsViewEl.classList.remove('hidden');
+  } else if (mode === 'locators') {
     hideDetail();
   }
 }
 
 document.querySelectorAll('.mode-tab').forEach(btn => {
   btn.addEventListener('click', () => {
-    switchMode((btn as HTMLElement).dataset['mode'] as 'api' | 'locators');
+    switchMode((btn as HTMLElement).dataset['mode'] as 'api' | 'locators' | 'crawler');
   });
 });
 
@@ -688,5 +757,379 @@ function escHtml(s: string): string {
 
 exportCsvEl.addEventListener('click', () => copyCSV().catch(console.error));
 exportJsonEl.addEventListener('click', () => copyJSON().catch(console.error));
+
+// ─── Crawler ──────────────────────────────────────────────────────────────────
+
+function waitForTabLoad(tabId: number): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      chrome.tabs.onUpdated.removeListener(listener);
+      reject(new Error('Page load timeout'));
+    }, 20_000);
+
+    function listener(id: number, info: chrome.tabs.TabChangeInfo): void {
+      if (id === tabId && info.status === 'complete') {
+        chrome.tabs.onUpdated.removeListener(listener);
+        clearTimeout(timer);
+        setTimeout(resolve, 800); // brief settle for dynamic content
+      }
+    }
+    chrome.tabs.onUpdated.addListener(listener);
+  });
+}
+
+function normaliseUrl(url: string): string {
+  try {
+    const u = new URL(url);
+    u.hash = '';
+    return u.toString();
+  } catch {
+    return url;
+  }
+}
+
+function updateCrawlProgress(visitedCount: number, queuedCount: number, pathLabel: string): void {
+  const maxPages = parseInt(crawlMaxPagesEl.value, 10);
+  crawlVisitedEl.textContent = `${visitedCount} visited`;
+  crawlQueuedEl.textContent  = `${queuedCount} queued`;
+  crawlStatusEl.textContent  = `Crawling: ${pathLabel}`;
+  crawlFillEl.style.width    = `${Math.min(100, (visitedCount / maxPages) * 100)}%`;
+}
+
+function addCrawledPageRow(page: CrawledPage): void {
+  if (crawlPageListEl.contains(crawlEmptyEl)) crawlPageListEl.removeChild(crawlEmptyEl);
+  const row = document.createElement('div');
+  row.className = 'crawl-page-row';
+  row.innerHTML =
+    `<span class="crawl-page-num">${page.index}</span>` +
+    `<div class="crawl-page-info">` +
+      `<span class="crawl-page-title">${escHtml(page.title || '(no title)')}</span>` +
+      `<span class="crawl-page-url">${escHtml(page.url)}</span>` +
+    `</div>` +
+    `<span class="crawl-page-count">${page.elements.length} els</span>`;
+  crawlPageListEl.appendChild(row);
+}
+
+async function runCrawl(): Promise<void> {
+  if (!currentTabId) return;
+
+  const maxPages = parseInt(crawlMaxPagesEl.value, 10);
+  const tab = await chrome.tabs.get(currentTabId);
+  if (!tab.url) return;
+
+  const baseOrigin = new URL(tab.url).origin;
+  const visited = new Set<string>();
+  const queue: string[] = [tab.url];
+  crawlerPages = [];
+  crawlerRunning = true;
+  crawlerAborted = false;
+
+  crawlPageListEl.innerHTML = '';
+  crawlPageListEl.appendChild(crawlEmptyEl);
+  crawlerActionsEl.classList.add('hidden');
+  crawlProgressEl.classList.remove('hidden');
+  crawlStatusEl.textContent = 'Starting…';
+  crawlVisitedEl.textContent = '0 visited';
+  crawlQueuedEl.textContent = '0 queued';
+  crawlFillEl.style.width = '0%';
+
+  while (queue.length > 0 && crawlerPages.length < maxPages && !crawlerAborted) {
+    const url = queue.shift()!;
+    const normalised = normaliseUrl(url);
+    if (visited.has(normalised)) continue;
+    visited.add(normalised);
+
+    let pathLabel = url;
+    try { pathLabel = new URL(url).pathname || '/'; } catch { /* keep full url */ }
+    updateCrawlProgress(crawlerPages.length, queue.length, pathLabel);
+
+    try {
+      await chrome.tabs.update(currentTabId, { url });
+      await waitForTabLoad(currentTabId);
+    } catch {
+      if (crawlerAborted) break;
+      continue;
+    }
+    if (crawlerAborted) break;
+
+    let resp: CrawlResponse | null = null;
+    try {
+      resp = await safeTabsSendMessage(currentTabId, { type: 'CRAWL_CAPTURE_DOM' }) as CrawlResponse;
+    } catch {
+      continue;
+    }
+    if (!resp?.ok || !resp.dom) continue;
+
+    const page: CrawledPage = {
+      url,
+      title: resp.title ?? '',
+      dom: resp.dom,
+      links: resp.links ?? [],
+      elements: resp.elements ?? [],
+      timestamp: Date.now(),
+      index: crawlerPages.length + 1,
+    };
+    crawlerPages.push(page);
+    addCrawledPageRow(page);
+
+    for (const link of page.links) {
+      try {
+        if (new URL(link).origin === baseOrigin && !visited.has(normaliseUrl(link))) {
+          queue.push(link);
+        }
+      } catch { /* skip non-parseable */ }
+    }
+  }
+
+  crawlerRunning = false;
+  crawlStartBtn.textContent = '▶ Start Crawl';
+  crawlStartBtn.disabled = false;
+  crawlStartBtn.classList.remove('stopping');
+  crawlStatusEl.textContent = crawlerAborted
+    ? `Stopped — ${crawlerPages.length} pages captured`
+    : `Done — ${crawlerPages.length} pages captured`;
+  crawlFillEl.style.width = '100%';
+  crawlQueuedEl.textContent = '0 queued';
+  if (crawlerPages.length > 0) crawlerActionsEl.classList.remove('hidden');
+}
+
+async function downloadCrawlZip(): Promise<void> {
+  if (crawlerPages.length === 0) return;
+
+  crawlDownloadBtn.disabled = true;
+  crawlDownloadBtn.textContent = '⟳ Generating…';
+
+  try {
+    const zip = new JSZip();
+    const pagesFolder = zip.folder('pages')!;
+
+    const manifest = {
+      tool: 'QALens Crawler',
+      generatedAt: new Date().toISOString(),
+      baseUrl: crawlerPages[0]?.url ?? '',
+      totalPages: crawlerPages.length,
+      pages: crawlerPages.map(p => ({
+        index: p.index,
+        url: p.url,
+        title: p.title,
+        htmlFile: `pages/page-${String(p.index).padStart(3, '0')}.html`,
+        jsonFile: `pages/page-${String(p.index).padStart(3, '0')}.json`,
+        elementCount: p.elements.length,
+        linkCount: p.links.length,
+        capturedAt: new Date(p.timestamp).toISOString(),
+      })),
+    };
+    zip.file('manifest.json', JSON.stringify(manifest, null, 2));
+
+    for (const page of crawlerPages) {
+      const pad = String(page.index).padStart(3, '0');
+      pagesFolder.file(`page-${pad}.html`, page.dom);
+      pagesFolder.file(`page-${pad}.json`, JSON.stringify({
+        url: page.url,
+        title: page.title,
+        capturedAt: new Date(page.timestamp).toISOString(),
+        elements: page.elements,
+        links: page.links,
+      }, null, 2));
+    }
+
+    const blob = await zip.generateAsync({
+      type: 'blob',
+      compression: 'DEFLATE',
+      compressionOptions: { level: 6 },
+    });
+    const blobUrl = URL.createObjectURL(blob);
+    const anchor = document.createElement('a');
+    anchor.href = blobUrl;
+    anchor.download = `qalens-crawl-${Date.now()}.zip`;
+    document.body.appendChild(anchor);
+    anchor.click();
+    document.body.removeChild(anchor);
+    setTimeout(() => URL.revokeObjectURL(blobUrl), 5000);
+  } finally {
+    crawlDownloadBtn.disabled = false;
+    crawlDownloadBtn.textContent = '⬇ Download ZIP';
+  }
+}
+
+// ─── Crawl mode switching ─────────────────────────────────────────────────────
+
+function setCrawlMode(mode: 'auto' | 'manual'): void {
+  crawlMode = mode;
+  document.querySelectorAll('.crawl-mode-btn').forEach(b => {
+    b.classList.toggle('active', (b as HTMLElement).dataset['crawlMode'] === mode);
+  });
+  if (mode === 'auto') {
+    crawlMaxPagesWrapEl.classList.remove('hidden');
+    crawlModeHintEl.textContent = 'Extension navigates links automatically.';
+    crawlEmptyHintEl.textContent = 'Extension will navigate links automatically.';
+    crawlStartBtn.textContent = '▶ Start Crawl';
+  } else {
+    crawlMaxPagesWrapEl.classList.add('hidden');
+    crawlModeHintEl.textContent = 'Browse pages yourself — each page load is captured.';
+    crawlEmptyHintEl.textContent = 'Browse normally — every page you visit is captured.';
+    crawlStartBtn.textContent = '▶ Start Monitoring';
+  }
+}
+
+document.querySelectorAll('.crawl-mode-btn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    if (crawlerRunning) return; // lock mode while running
+    setCrawlMode((btn as HTMLElement).dataset['crawlMode'] as 'auto' | 'manual');
+  });
+});
+
+// ─── Manual crawl ─────────────────────────────────────────────────────────────
+
+async function captureManualPage(tabId: number): Promise<void> {
+  if (!crawlerRunning || crawlerAborted) return;
+
+  await new Promise<void>(r => setTimeout(r, 400)); // brief settle for dynamic content
+  if (!crawlerRunning || crawlerAborted) return;
+
+  let url = '';
+  try {
+    const t = await chrome.tabs.get(tabId);
+    url = t.url ?? '';
+  } catch { return; }
+
+  if (!url || url.startsWith('chrome://') || url.startsWith('chrome-extension://')) return;
+
+  const normUrl = normaliseUrl(url);
+  if (capturedUrls.has(normUrl)) return;
+  // Claim synchronously before any await — JS is single-threaded so no two calls
+  // can both pass the has() check; this prevents duplicate captures across tabs.
+  capturedUrls.add(normUrl);
+
+  let resp: CrawlResponse | null = null;
+  try {
+    resp = await safeTabsSendMessage(tabId, { type: 'CRAWL_CAPTURE_DOM' }) as CrawlResponse;
+  } catch {
+    capturedUrls.delete(normUrl); // un-claim so a later retry can succeed
+    return;
+  }
+  if (!resp?.ok || !resp.dom) {
+    capturedUrls.delete(normUrl);
+    return;
+  }
+
+  const page: CrawledPage = {
+    url,
+    title: resp.title ?? '',
+    dom: resp.dom,
+    links: resp.links ?? [],
+    elements: resp.elements ?? [],
+    timestamp: Date.now(),
+    index: crawlerPages.length + 1,
+  };
+  crawlerPages.push(page);
+  addCrawledPageRow(page);
+  crawlVisitedEl.textContent = `${crawlerPages.length} captured`;
+  try {
+    crawlStatusEl.textContent = `Last: ${new URL(url).pathname || '/'}`;
+  } catch {
+    crawlStatusEl.textContent = `Captured: ${page.title || url}`;
+  }
+}
+
+async function runManualCrawl(): Promise<void> {
+  if (!currentTabId) return;
+
+  manualCrawlOriginTabId = currentTabId;
+  crawlerPages = [];
+  crawlerRunning = true;
+  crawlerAborted = false;
+  capturedUrls.clear();
+  trackedChildTabs.clear();
+
+  crawlPageListEl.innerHTML = '';
+  crawlPageListEl.appendChild(crawlEmptyEl);
+  crawlerActionsEl.classList.add('hidden');
+  crawlProgressEl.classList.remove('hidden');
+  crawlStatusEl.textContent = 'Monitoring — browse pages to capture them…';
+  crawlVisitedEl.textContent = '0 captured';
+  crawlQueuedEl.textContent = 'manual mode';
+  crawlFillEl.style.width = '0%';
+
+  const tabIdToWatch = currentTabId;
+
+  // Track new tabs opened from the session (direct children and grandchildren)
+  newTabCreatedListener = (tab: chrome.tabs.Tab) => {
+    if (!crawlerRunning || !tab.id) return;
+    if (tab.openerTabId === tabIdToWatch ||
+        (tab.openerTabId != null && trackedChildTabs.has(tab.openerTabId))) {
+      trackedChildTabs.add(tab.id);
+    }
+  };
+  chrome.tabs.onCreated.addListener(newTabCreatedListener);
+
+  // Clean up tracking when a child tab is closed
+  newTabRemovedListener = (tabId: number) => { trackedChildTabs.delete(tabId); };
+  chrome.tabs.onRemoved.addListener(newTabRemovedListener);
+
+  // Capture on every page-complete for origin tab OR any tracked child tab
+  manualCrawlListener = (_tabId: number, info: chrome.tabs.TabChangeInfo) => {
+    if (info.status !== 'complete' || !crawlerRunning) return;
+    if (_tabId !== tabIdToWatch && !trackedChildTabs.has(_tabId)) return;
+    captureManualPage(_tabId).catch(() => {});
+  };
+  chrome.tabs.onUpdated.addListener(manualCrawlListener);
+
+  // Capture the starting page immediately
+  await captureManualPage(tabIdToWatch);
+}
+
+function stopManualCrawl(): void {
+  crawlerRunning = false;
+  if (manualCrawlListener)   { chrome.tabs.onUpdated.removeListener(manualCrawlListener);   manualCrawlListener = null; }
+  if (newTabCreatedListener) { chrome.tabs.onCreated.removeListener(newTabCreatedListener); newTabCreatedListener = null; }
+  if (newTabRemovedListener) { chrome.tabs.onRemoved.removeListener(newTabRemovedListener); newTabRemovedListener = null; }
+  trackedChildTabs.clear();
+  capturedUrls.clear();
+  manualCrawlOriginTabId = null;
+  crawlStartBtn.textContent = '▶ Start Monitoring';
+  crawlStartBtn.disabled = false;
+  crawlStartBtn.classList.remove('stopping');
+  crawlStatusEl.textContent = `Complete — ${crawlerPages.length} page${crawlerPages.length !== 1 ? 's' : ''} captured`;
+  crawlFillEl.style.width = '100%';
+  crawlQueuedEl.textContent = 'manual mode';
+  if (crawlerPages.length > 0) crawlerActionsEl.classList.remove('hidden');
+}
+
+// ─── Crawler button wiring ────────────────────────────────────────────────────
+
+crawlStartBtn.addEventListener('click', () => {
+  if (crawlerRunning) {
+    if (crawlMode === 'manual') {
+      stopManualCrawl();
+    } else {
+      crawlerAborted = true;
+      crawlStartBtn.disabled = true;
+      crawlStartBtn.classList.add('stopping');
+      crawlStartBtn.textContent = 'Stopping…';
+    }
+  } else {
+    if (crawlMode === 'manual') {
+      crawlStartBtn.textContent = '⏹ Complete';
+      crawlStartBtn.classList.add('stopping');
+      runManualCrawl().catch(err => {
+        stopManualCrawl();
+        crawlStatusEl.textContent = `Error: ${(err as Error).message}`;
+      });
+    } else {
+      crawlStartBtn.textContent = '⏹ Cancel';
+      crawlStartBtn.classList.add('stopping');
+      runCrawl().catch(err => {
+        crawlerRunning = false;
+        crawlStartBtn.textContent = '▶ Start Crawl';
+        crawlStartBtn.disabled = false;
+        crawlStartBtn.classList.remove('stopping');
+        crawlStatusEl.textContent = `Error: ${(err as Error).message}`;
+      });
+    }
+  }
+});
+
+crawlDownloadBtn.addEventListener('click', () => downloadCrawlZip().catch(console.error));
 
 init().catch(console.error);
