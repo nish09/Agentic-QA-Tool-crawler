@@ -8,6 +8,7 @@
     "build": "webpack --config webpack.config.ts",
     "watch": "webpack --config webpack.config.ts --watch",
     "build:prod": "node scripts/generate-icons.js && cross-env NODE_ENV=production webpack --config webpack.config.ts",
+    "package": "powershell -ExecutionPolicy Bypass -File scripts/package.ps1",
     "type-check": "tsc --noEmit",
     "lint": "eslint src --ext .ts"
   },

@@ -1,15 +1,8 @@
-/**
- * Shared TypeScript types for API Mapper Tool
- * Used across Chrome Extension, Agent, and Dashboard
- */
-
-// ─── Core API Call ───────────────────────────────────────────────────────────
-
 export interface CapturedAPICall {
   id: string;
   timestamp: number;
   url: string;
-  method: HTTPMethod;
+  method: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE' | 'OPTIONS';
   requestHeaders: Record<string, string>;
   requestPayload?: unknown;
   responseStatus: number;
@@ -18,19 +11,9 @@ export interface CapturedAPICall {
   responseSchema?: JSONSchema;
   uiContext?: UIContext;
   inferredDBTables?: DBTableMapping[];
-  tags?: string[];
 }
 
-export type HTTPMethod =
-  | 'GET'
-  | 'POST'
-  | 'PUT'
-  | 'PATCH'
-  | 'DELETE'
-  | 'OPTIONS'
-  | 'HEAD';
-
-// ─── UI Context ───────────────────────────────────────────────────────────────
+export type TriggerAction = 'click' | 'scroll' | 'load' | 'input' | 'unknown';
 
 export interface UIContext {
   pageUrl: string;
@@ -41,58 +24,16 @@ export interface UIContext {
   domPath?: string;
 }
 
-export type TriggerAction =
-  | 'click'
-  | 'scroll'
-  | 'load'
-  | 'input'
-  | 'hover'
-  | 'unknown';
-
-// ─── Schema Inference ─────────────────────────────────────────────────────────
-
-export interface JSONSchema {
-  type: 'string' | 'number' | 'boolean' | 'object' | 'array' | 'null';
-  properties?: Record<string, JSONSchema>;
-  items?: JSONSchema;
-  required?: string[];
-  example?: unknown;
-}
-
 export interface DBTableMapping {
   fieldPath: string;
   inferredTable: string;
-  inferredColumn?: string;
-  confidence: ConfidenceLevel;
+  confidence: 'high' | 'medium' | 'low';
   reasoning: string;
 }
 
-export type ConfidenceLevel = 'high' | 'medium' | 'low';
-
-// ─── Report / Document ────────────────────────────────────────────────────────
-
-export interface MappingReport {
-  id: string;
-  generatedAt: number;
-  targetUrl: string;
-  totalAPIsFound: number;
-  apiCalls: CapturedAPICall[];
-  summary: ReportSummary;
-}
-
-export interface ReportSummary {
-  totalEndpoints: number;
-  uniqueHosts: string[];
-  methodBreakdown: Record<HTTPMethod, number>;
-  inferredTables: string[];
-  uiSections: string[];
-}
-
-// ─── Extension Storage ────────────────────────────────────────────────────────
-
-export interface ExtensionStorage {
-  capturedCalls: CapturedAPICall[];
-  isCapturing: boolean;
-  filterText: string;
-  selectedCall?: string;
+export interface JSONSchema {
+  type: string;
+  properties?: Record<string, JSONSchema>;
+  items?: JSONSchema;
+  description?: string;
 }

@@ -313,12 +313,27 @@ chrome.tabs.onUpdated.addListener((tabId, changeInfo) => {
   }
 });
 
+// ─── Per-tab panel visibility ─────────────────────────────────────────────────
+// chrome.sidePanel is window-level: once opened it stays visible across all
+// tabs. Simulate per-tab behaviour by disabling the panel for every tab that
+// the user didn't explicitly open it for, and re-enabling it when they switch
+// back to a tab where they did.
+chrome.tabs.onActivated.addListener(({ tabId }) => {
+  if (!chrome.sidePanel) return;
+  if (panelOpenTabs.has(tabId)) {
+    chrome.sidePanel.setOptions({ tabId, enabled: true, path: 'popup.html' }).catch(() => {});
+  } else {
+    chrome.sidePanel.setOptions({ tabId, enabled: false }).catch(() => {});
+  }
+});
+
 // ─── Clear data on tab close ─────────────────────────────────────────────────
 // Without this, a closed tab's captured calls sit in chrome.storage.local
 // forever (onBeforeNavigate above only fires on navigation, not closure).
 
 chrome.tabs.onRemoved.addListener((tabId) => {
   cancelSettled(tabId);
+  panelOpenTabs.delete(tabId);
   chrome.storage.local.remove([
     `qalens_${tabId}`,
     `qalens_settled_${tabId}`,
@@ -349,37 +364,55 @@ async function sweepStaleTabData(): Promise<void> {
 // still let interceptor.ts/content.ts capture and relay data, just silently
 // drop it here. Broadcasting SET_CAPTURING lets content.ts stop relaying at
 // the source, so nothing leaves the page while paused.
+// Promise.allSettled is used so tabs without content scripts (new tab page,
+// chrome:// pages, etc.) don't surface "Could not establish connection" errors.
 
-chrome.storage.onChanged.addListener((changes, area) => {
+chrome.storage.onChanged.addListener(async (changes, area) => {
   if (area !== 'local' || !changes[CAPTURE_KEY]) return;
   const capturing = changes[CAPTURE_KEY].newValue !== false;
-  chrome.tabs.query({}, (tabs) => {
-    for (const tab of tabs) {
-      if (tab.id === undefined) continue;
-      chrome.tabs.sendMessage(tab.id, { type: 'SET_CAPTURING', capturing }).catch(() => {});
-    }
-  });
+  const tabs = await chrome.tabs.query({});
+  await Promise.allSettled(
+    tabs
+      .filter(t => t.id !== undefined)
+      .map(t => chrome.tabs.sendMessage(t.id!, { type: 'SET_CAPTURING', capturing })),
+  );
 });
 
-// ─── Side panel — tab-specific ───────────────────────────────────────────────
-// openPanelOnActionClick: false → Chrome does NOT auto-open the panel globally,
-// so action.onClicked fires. We then open it only for the clicked tab.
+// ─── Side panel — per-tab ────────────────────────────────────────────────────
+// Panel is globally enabled (required for chrome.sidePanel.open() to work) but
+// openPanelOnActionClick is false so it never auto-opens. We track which tabs
+// have the panel open in a Set and toggle manually on each icon click.
+// Closing is done by setting enabled:false per-tab; re-opening restores it.
 
-chrome.sidePanel
-  .setPanelBehavior({ openPanelOnActionClick: false })
-  .catch(() => {});
+const panelOpenTabs = new Set<number>();
+
+if (chrome.sidePanel) {
+  chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: false }).catch(() => {});
+  chrome.sidePanel.setOptions({ enabled: true, path: 'popup.html' }).catch(() => {});
+}
 
 chrome.action.onClicked.addListener((tab) => {
-  if (!tab.id) return;
-  chrome.sidePanel.open({ tabId: tab.id }).catch(console.error);
+  if (!tab.id || !chrome.sidePanel?.open) return;
+  const tabId = tab.id;
+  if (panelOpenTabs.has(tabId)) {
+    panelOpenTabs.delete(tabId);
+    chrome.sidePanel.setOptions({ tabId, enabled: false }).catch(() => {});
+  } else {
+    panelOpenTabs.add(tabId);
+    // Both calls are synchronous (no await) — user gesture token is still alive.
+    // Chrome queues them in order over IPC, so setOptions is processed before open().
+    chrome.sidePanel.setOptions({ tabId, enabled: true, path: 'popup.html' }).catch(() => {});
+    chrome.sidePanel.open({ tabId }).catch(() => panelOpenTabs.delete(tabId));
+  }
 });
 
 // ─── Init ─────────────────────────────────────────────────────────────────────
 
 chrome.runtime.onInstalled.addListener(() => {
   chrome.storage.local.set({ [CAPTURE_KEY]: true });
-  chrome.sidePanel
-    .setPanelBehavior({ openPanelOnActionClick: false })
-    .catch(() => {});
+  if (chrome.sidePanel) {
+    chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: false }).catch(() => {});
+    chrome.sidePanel.setOptions({ enabled: true, path: 'popup.html' }).catch(() => {});
+  }
   sweepStaleTabData().catch(() => {});
 });
