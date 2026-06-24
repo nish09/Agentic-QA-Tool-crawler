@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "QALens — Discover APIs & Page Locators",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "Capture every API call and generate Playwright/Selenium locators for any web app. Built for QA Engineers and Business Analysts.",
 
   "content_security_policy": {
