@@ -30,9 +30,6 @@ const config: Configuration = {
   // ─── Resolve ───────────────────────────────────────────────────────────────
   resolve: {
     extensions: ['.ts', '.js'],
-    alias: {
-      '../../../shared': path.resolve(__dirname, '../shared'),
-    },
   },
 
   // ─── Loaders ───────────────────────────────────────────────────────────────

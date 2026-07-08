@@ -142,6 +142,8 @@ const crawlMaxPagesWrapEl= document.getElementById('crawl-max-pages-wrap')as HTM
 const crawlModeHintEl    = document.getElementById('crawl-mode-hint')     as HTMLDivElement;
 const crawlEmptyHintEl   = document.getElementById('crawl-empty-hint')    as HTMLParagraphElement;
 const actionsBarEl       = document.getElementById('actions')             as HTMLDivElement;
+const crawlSendAgentEl   = document.getElementById('crawl-send-agent')    as HTMLInputElement;
+const crawlAgentStatusEl = document.getElementById('crawl-agent-status')  as HTMLDivElement;
 
 // ─── State ────────────────────────────────────────────────────────────────────
 
@@ -680,6 +682,9 @@ toggleBtn.addEventListener('click', async () => {
 
 clearBtn.addEventListener('click', async () => {
   if (currentTabId === null) return;
+  // Clear the service worker's in-memory cache first — otherwise a debounced
+  // flush already in flight could re-write the old calls right after this remove.
+  safeRuntimeSendMessage({ type: 'CLEAR_TAB_CALLS', tabId: currentTabId });
   await chrome.storage.local.remove([`qalens_${currentTabId}`]);
   currentCalls = [];
   hideDetail();
@@ -808,6 +813,41 @@ function addCrawledPageRow(page: CrawledPage): void {
     `</div>` +
     `<span class="crawl-page-count">${page.elements.length} els</span>`;
   crawlPageListEl.appendChild(row);
+  sendPageToAgent(page);
+}
+
+// ─── Send to Agent ────────────────────────────────────────────────────────────
+// Opt-in bridge to the locally-running QALens Agent dashboard (agent/, phase 2)
+// so DOM pages captured here — including manual-mode browsing, which the agent
+// can't do itself since it drives a headless browser — show up live in its
+// DOM Collector tab. Off by default; only sends once the user checks the box.
+
+const AGENT_URL = 'http://localhost:3000';
+let agentSendEnabled = false;
+let agentUnreachableWarned = false;
+
+crawlSendAgentEl?.addEventListener('change', () => {
+  agentSendEnabled = crawlSendAgentEl.checked;
+  agentUnreachableWarned = false;
+  crawlAgentStatusEl.classList.add('hidden');
+});
+
+async function sendPageToAgent(page: CrawledPage): Promise<void> {
+  if (!agentSendEnabled) return;
+  try {
+    const res = await fetch(`${AGENT_URL}/api/dom/ingest`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ page }),
+    });
+    if (!res.ok) throw new Error(String(res.status));
+  } catch {
+    if (!agentUnreachableWarned) {
+      agentUnreachableWarned = true;
+      crawlAgentStatusEl.textContent = 'Could not reach QALens Agent at localhost:3000 — is it running?';
+      crawlAgentStatusEl.classList.remove('hidden');
+    }
+  }
 }
 
 async function runCrawl(): Promise<void> {

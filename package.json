@@ -1,5 +1,9 @@
 {
-  "dependencies": {
-    "jszip": "^3.10.1"
-  }
+  "name": "qalens-monorepo",
+  "private": true,
+  "workspaces": [
+    "chrome-extension",
+    "agent",
+    "shared"
+  ]
 }

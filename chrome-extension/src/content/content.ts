@@ -4,7 +4,7 @@
  * 2. Bridges postMessage from the MAIN-world interceptor.ts → service worker.
  */
 
-import type { UIContext, TriggerAction } from '../../../shared/types';
+import type { UIContext, TriggerAction } from '@qalens/shared/types';
 
 let lastUIContext: UIContext = {
   pageUrl: window.location.href,
@@ -79,6 +79,22 @@ function getDOMPath(el: Element): string {
 }
 
 // ─── UIContext tracking ───────────────────────────────────────────────────────
+// Skipped in cross-origin (ad/tracker/widget) iframes — with all_frames:true
+// every such iframe would otherwise get its own capture-phase document
+// listeners, adding up on iframe-heavy pages for frames that never trigger
+// API calls worth attributing anyway.
+
+function isThirdPartyFrame(): boolean {
+  if (window === window.top) return false;
+  try {
+    void window.top?.location.href;
+    return false; // same-origin iframe — likely part of the app itself
+  } catch {
+    return true; // cross-origin — skip
+  }
+}
+
+if (!isThirdPartyFrame()) {
 
 document.addEventListener('click', (e) => {
   const target = e.target as Element;
@@ -103,6 +119,8 @@ document.addEventListener('input', (e) => {
   };
   sendUIContext(lastUIContext);
 }, true);
+
+} // end isThirdPartyFrame guard
 
 window.addEventListener('load', () => {
   lastUIContext = {

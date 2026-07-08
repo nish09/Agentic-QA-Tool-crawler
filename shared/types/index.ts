@@ -36,4 +36,6 @@ export interface JSONSchema {
   properties?: Record<string, JSONSchema>;
   items?: JSONSchema;
   description?: string;
+  required?: string[];
+  example?: unknown;
 }

@@ -646,6 +646,22 @@ header {
 
 .crawler-label.hidden { display: none; }
 
+#crawl-agent-link {
+  padding: 5px 12px;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface2);
+  cursor: pointer;
+}
+#crawl-agent-link input { cursor: pointer; }
+
+#crawl-agent-status {
+  padding: 4px 12px;
+  font-size: 10px;
+  color: var(--muted);
+  background: var(--surface2);
+  border-bottom: 1px solid var(--border);
+}
+
 #crawl-start-btn {
   padding: 5px 14px;
   border: none;

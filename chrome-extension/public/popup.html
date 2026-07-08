@@ -128,6 +128,13 @@
       </div>
       <div id="crawl-mode-hint">Extension navigates links automatically.</div>
 
+      <!-- Send captures to the local QALens Agent dashboard as they're captured -->
+      <label id="crawl-agent-link" class="crawler-label">
+        <input type="checkbox" id="crawl-send-agent"/>
+        Send to Agent (localhost:3000)
+      </label>
+      <div id="crawl-agent-status" class="hidden"></div>
+
       <!-- Progress -->
       <div id="crawler-progress" class="hidden">
         <div id="crawl-status-text">Crawling…</div>

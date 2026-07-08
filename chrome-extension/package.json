@@ -29,6 +29,7 @@
   "webpack-cli": "^5.1.4"
   },
   "dependencies": {
+    "@qalens/shared": "*",
     "jszip": "^3.10.1"
   }
 }

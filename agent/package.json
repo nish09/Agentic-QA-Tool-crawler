@@ -1,0 +1,28 @@
+{
+  "name": "qalens-agent",
+  "version": "2.0.0",
+  "description": "QALens Phase 2 — Headless Playwright crawler with API discovery and AI schema inference",
+  "private": true,
+  "scripts": {
+    "start": "ts-node src/index.ts",
+    "server": "ts-node src/server/index.ts",
+    "dev": "ts-node src/index.ts",
+    "build": "tsc"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.36.0",
+    "@qalens/shared": "*",
+    "@types/jszip": "^3.4.0",
+    "dotenv": "^16.4.0",
+    "exceljs": "^4.4.0",
+    "express": "^4.21.0",
+    "jszip": "^3.10.1",
+    "playwright": "^1.52.0"
+  },
+  "devDependencies": {
+    "@types/express": "^4.17.21",
+    "@types/node": "^22.0.0",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.7.0"
+  }
+}
