@@ -1,0 +1,728 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>QALens — API Discovery Dashboard</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; }
+    .badge-GET    { background:#dbeafe;color:#1d4ed8; }
+    .badge-POST   { background:#dcfce7;color:#15803d; }
+    .badge-PUT    { background:#fef9c3;color:#a16207; }
+    .badge-PATCH  { background:#ffedd5;color:#c2410c; }
+    .badge-DELETE { background:#fee2e2;color:#b91c1c; }
+    .badge-OPTIONS{ background:#f3e8ff;color:#7e22ce; }
+    .el-BTN  { background:#dbeafe;color:#1d4ed8; }
+    .el-LINK { background:#f0fdf4;color:#15803d; }
+    .el-INP  { background:#fff7ed;color:#c2410c; }
+    .el-CHK  { background:#fdf4ff;color:#7e22ce; }
+    .el-RAD  { background:#fff1f2;color:#be123c; }
+    .el-SEL  { background:#fef9c3;color:#854d0e; }
+    .el-TXT  { background:#f8fafc;color:#475569; }
+    .el-CUST { background:#f1f5f9;color:#64748b; }
+    .fw-pw { background:#7c3aed;color:#fff; }
+    .fw-se { background:#0369a1;color:#fff; }
+    .status-ok   { color:#16a34a;font-weight:600; }
+    .status-warn { color:#d97706;font-weight:600; }
+    .status-err  { color:#dc2626;font-weight:600; }
+    .spin { animation:spin 1s linear infinite; }
+    @keyframes spin { to { transform:rotate(360deg); } }
+    .slide-in { animation:slideIn .15s ease-out; }
+    @keyframes slideIn { from{opacity:0;transform:translateY(-3px)} to{opacity:1} }
+    #preview-img { transition:opacity .25s ease; }
+    #preview-img.flash { animation:flash .3s ease; }
+    @keyframes flash { 0%{opacity:.3} 100%{opacity:1} }
+    .tab-active { border-bottom:2px solid #2563eb;color:#2563eb;font-weight:600; }
+    .tab-inactive { border-bottom:2px solid transparent;color:#64748b; }
+    .tab-inactive:hover { color:#334155; }
+    pre { white-space:pre-wrap;word-break:break-all; }
+    ::-webkit-scrollbar{width:5px;height:5px}
+    ::-webkit-scrollbar-track{background:#f1f5f9}
+    ::-webkit-scrollbar-thumb{background:#cbd5e1;border-radius:3px}
+  </style>
+</head>
+<body class="bg-slate-50 min-h-screen">
+
+<!-- ── Header ───────────────────────────────────────────────────────────────── -->
+<header class="bg-white border-b border-slate-200 sticky top-0 z-20">
+  <div class="max-w-screen-xl mx-auto px-6 py-3 flex items-center justify-between">
+    <div class="flex items-center gap-3">
+      <div class="w-8 h-8 bg-blue-600 rounded-lg flex items-center justify-center">
+        <svg class="w-4 h-4 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+            d="M9 3H5a2 2 0 00-2 2v4m6-6h10a2 2 0 012 2v4M9 3v18m0 0h10a2 2 0 002-2V9M9 21H5a2 2 0 01-2-2V9m0 0h18"/>
+        </svg>
+      </div>
+      <div>
+        <h1 class="text-sm font-bold text-slate-800 leading-tight">QALens Agent</h1>
+        <p class="text-xs text-slate-400">Phase 2 · Local Dashboard</p>
+      </div>
+    </div>
+    <div id="aiStatus" class="text-xs px-3 py-1 rounded-full bg-green-50 text-green-700">🤖 Claude API</div>
+  </div>
+
+  <!-- Tab bar -->
+  <div class="max-w-screen-xl mx-auto px-6 flex gap-6 border-t border-slate-100">
+    <button data-tab="api"      class="tab tab-active   py-2.5 text-sm transition-colors">📡 API Discovery</button>
+    <button data-tab="locators" class="tab tab-inactive py-2.5 text-sm transition-colors">🎯 Page Locators</button>
+    <button data-tab="dom"      class="tab tab-inactive py-2.5 text-sm transition-colors">🕷 DOM Collector</button>
+  </div>
+</header>
+
+<main class="max-w-screen-xl mx-auto px-6 py-6">
+
+<!-- ══════════════════════════════════════════════════════════════════════════ -->
+<!-- TAB 1 — API DISCOVERY                                                      -->
+<!-- ══════════════════════════════════════════════════════════════════════════ -->
+<div id="tab-api">
+  <!-- URL Input -->
+  <div class="bg-white rounded-2xl shadow-sm border border-slate-200 p-5 mb-5">
+    <div class="flex gap-3">
+      <input id="api-url" type="url" placeholder="https://your-app.com"
+        class="flex-1 border border-slate-300 rounded-xl px-4 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 placeholder-slate-400"/>
+      <div class="flex items-center gap-2 shrink-0">
+        <span class="text-xs text-slate-400">Max pages</span>
+        <input id="api-maxpages" type="number" value="10" min="1" max="50"
+          class="w-16 border border-slate-300 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"/>
+      </div>
+      <button id="api-start"
+        class="bg-blue-600 hover:bg-blue-700 text-white px-5 py-2 rounded-xl text-sm font-semibold flex items-center gap-2 transition-colors disabled:opacity-50">
+        <span id="api-start-icon">▶</span> <span id="api-start-label">Start Crawl</span>
+      </button>
+    </div>
+    <div id="api-status" class="hidden mt-3 text-xs text-slate-500 flex items-center gap-2">
+      <svg id="api-spin" class="spin w-3.5 h-3.5 text-blue-500 hidden" fill="none" viewBox="0 0 24 24">
+        <circle cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4" class="opacity-25"/>
+        <path fill="currentColor" d="M4 12a8 8 0 018-8v8z" class="opacity-75"/>
+      </svg>
+      <span id="api-status-text"></span>
+    </div>
+  </div>
+
+  <!-- Stats -->
+  <div class="grid grid-cols-3 gap-4 mb-5">
+    <div class="bg-white rounded-2xl border border-slate-200 p-4">
+      <div class="text-2xl font-bold text-blue-600" id="api-stat-pages">0</div>
+      <div class="text-xs text-slate-500 mt-0.5">Pages Visited</div>
+    </div>
+    <div class="bg-white rounded-2xl border border-slate-200 p-4">
+      <div class="text-2xl font-bold text-blue-600" id="api-stat-calls">0</div>
+      <div class="text-xs text-slate-500 mt-0.5">API Calls Captured</div>
+    </div>
+    <div class="bg-white rounded-2xl border border-slate-200 p-4">
+      <div class="text-2xl font-bold text-blue-600" id="api-stat-unique">0</div>
+      <div class="text-xs text-slate-500 mt-0.5">Unique Endpoints</div>
+    </div>
+  </div>
+
+  <!-- Table -->
+  <div class="bg-white rounded-2xl border border-slate-200 overflow-hidden">
+    <div class="flex items-center justify-between px-5 py-3 border-b border-slate-100">
+      <span class="text-sm font-semibold text-slate-700">Captured API Calls</span>
+      <div class="flex gap-2">
+        <button id="api-export-json" disabled class="px-3 py-1.5 rounded-lg text-xs font-medium bg-slate-100 text-slate-400 disabled:cursor-not-allowed transition-all">⬇ JSON</button>
+        <button id="api-export-excel" disabled class="px-3 py-1.5 rounded-lg text-xs font-medium bg-slate-100 text-slate-400 disabled:cursor-not-allowed transition-all">⬇ Excel</button>
+      </div>
+    </div>
+    <div class="overflow-x-auto">
+      <table class="w-full text-xs">
+        <thead class="bg-slate-50 text-slate-500 uppercase text-xs font-semibold tracking-wider">
+          <tr>
+            <th class="px-4 py-2.5 text-left border-b border-slate-100">Method</th>
+            <th class="px-4 py-2.5 text-left border-b border-slate-100">Endpoint</th>
+            <th class="px-4 py-2.5 text-left border-b border-slate-100">Status</th>
+            <th class="px-4 py-2.5 text-left border-b border-slate-100">Triggered From</th>
+            <th class="px-4 py-2.5 text-left border-b border-slate-100">Response Fields</th>
+            <th class="px-4 py-2.5 text-left border-b border-slate-100">DB Tables</th>
+          </tr>
+        </thead>
+        <tbody id="api-table">
+          <tr><td colspan="6" class="px-4 py-12 text-center text-slate-400">Enter a URL and click Start Crawl</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div><!-- /tab-api -->
+
+<!-- ══════════════════════════════════════════════════════════════════════════ -->
+<!-- TAB 2 — PAGE LOCATORS                                                      -->
+<!-- ══════════════════════════════════════════════════════════════════════════ -->
+<div id="tab-locators" class="hidden">
+  <!-- Controls -->
+  <div class="bg-white rounded-2xl border border-slate-200 p-5 mb-5">
+    <div class="flex gap-3">
+      <input id="loc-url" type="url" placeholder="https://your-app.com"
+        class="flex-1 border border-slate-300 rounded-xl px-4 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 placeholder-slate-400"/>
+      <select id="loc-fw" class="border border-slate-300 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
+        <option value="both">Both frameworks</option>
+        <option value="playwright">Playwright only</option>
+        <option value="selenium">Selenium only</option>
+      </select>
+      <button id="loc-scan"
+        class="bg-purple-600 hover:bg-purple-700 text-white px-5 py-2 rounded-xl text-sm font-semibold flex items-center gap-2 transition-colors disabled:opacity-50">
+        <span>⬡</span> <span id="loc-scan-label">Scan Page</span>
+      </button>
+    </div>
+    <!-- Type filters -->
+    <div class="flex gap-2 mt-3">
+      <span class="text-xs text-slate-400 self-center">Filter:</span>
+      <button data-lf="all"     class="lf-btn px-2.5 py-1 rounded-lg text-xs font-medium bg-slate-800 text-white">All</button>
+      <button data-lf="button"  class="lf-btn px-2.5 py-1 rounded-lg text-xs font-medium bg-slate-100 text-slate-600 hover:bg-slate-200">Buttons</button>
+      <button data-lf="input"   class="lf-btn px-2.5 py-1 rounded-lg text-xs font-medium bg-slate-100 text-slate-600 hover:bg-slate-200">Inputs</button>
+      <button data-lf="link"    class="lf-btn px-2.5 py-1 rounded-lg text-xs font-medium bg-slate-100 text-slate-600 hover:bg-slate-200">Links</button>
+    </div>
+    <div id="loc-status" class="hidden mt-2 text-xs text-slate-500 flex items-center gap-2">
+      <svg id="loc-spin" class="spin w-3.5 h-3.5 text-purple-500 hidden" fill="none" viewBox="0 0 24 24">
+        <circle cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4" class="opacity-25"/>
+        <path fill="currentColor" d="M4 12a8 8 0 018-8v8z" class="opacity-75"/>
+      </svg>
+      <span id="loc-status-text"></span>
+    </div>
+  </div>
+
+  <!-- Locator cards + Live Preview -->
+  <div class="flex gap-5 items-start">
+
+    <!-- Left: locator cards -->
+    <div id="loc-list" class="flex-1 min-w-0 grid grid-cols-1 gap-3">
+      <div class="bg-white rounded-2xl border border-slate-200 p-8 text-center text-slate-400 text-sm">
+        Enter a URL and click <strong>Scan Page</strong> to generate locators
+      </div>
+    </div>
+
+    <!-- Right: Live Preview — hover a locator card to highlight it here.
+         Headless scans have no visible tab to highlight directly, so the
+         still-open scan session is highlighted + screenshotted on demand. -->
+    <div class="w-72 shrink-0 sticky top-20">
+      <div class="bg-white rounded-2xl border border-slate-200 overflow-hidden">
+        <div class="flex items-center justify-between px-4 py-3 border-b border-slate-100">
+          <span class="text-sm font-semibold text-slate-700">Live Preview</span>
+          <span id="loc-preview-badge" class="text-xs px-2 py-0.5 rounded-full bg-slate-100 text-slate-400">Idle</span>
+        </div>
+        <div class="relative bg-slate-900" style="min-height:180px">
+          <img id="loc-preview-img" class="w-full block" style="display:none" alt="Element preview"/>
+          <div id="loc-preview-placeholder" class="absolute inset-0 flex flex-col items-center justify-center gap-2">
+            <svg class="w-10 h-10 opacity-20" fill="none" stroke="#fff" viewBox="0 0 24 24">
+              <circle cx="12" cy="12" r="9" stroke-width="1.5"/>
+              <path stroke-width="1.5" d="M12 8v4l3 2"/>
+            </svg>
+            <p class="text-xs text-slate-400 text-center px-4">Hover a locator to<br/>see it highlighted here</p>
+          </div>
+        </div>
+      </div>
+    </div>
+
+  </div>
+</div><!-- /tab-locators -->
+
+<!-- ══════════════════════════════════════════════════════════════════════════ -->
+<!-- TAB 3 — DOM COLLECTOR                                                       -->
+<!-- ══════════════════════════════════════════════════════════════════════════ -->
+<div id="tab-dom" class="hidden">
+  <!-- Controls -->
+  <div class="bg-white rounded-2xl border border-slate-200 p-5 mb-5">
+    <div class="flex items-start justify-between gap-3 mb-3">
+      <p class="text-xs text-slate-500">Automatically navigates the app, captures full HTML snapshots + interactive elements per page, and exports a ZIP for test generation.</p>
+      <span id="dom-ext-link-badge" class="text-xs px-2 py-0.5 rounded-full bg-slate-100 text-slate-400 shrink-0 whitespace-nowrap">🔌 Waiting for extension</span>
+    </div>
+    <div class="flex gap-3">
+      <input id="dom-url" type="url" placeholder="https://your-app.com"
+        class="flex-1 border border-slate-300 rounded-xl px-4 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 placeholder-slate-400"/>
+      <div class="flex items-center gap-2 shrink-0">
+        <span class="text-xs text-slate-400">Max pages</span>
+        <input id="dom-maxpages" type="number" value="10" min="1" max="50"
+          class="w-16 border border-slate-300 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"/>
+      </div>
+      <button id="dom-start"
+        class="bg-emerald-600 hover:bg-emerald-700 text-white px-5 py-2 rounded-xl text-sm font-semibold flex items-center gap-2 transition-colors disabled:opacity-50">
+        <span>🕷</span> <span id="dom-start-label">Start Crawl</span>
+      </button>
+    </div>
+    <div id="dom-status" class="hidden mt-3 text-xs text-slate-500 flex items-center gap-2">
+      <svg id="dom-spin" class="spin w-3.5 h-3.5 text-emerald-500 hidden" fill="none" viewBox="0 0 24 24">
+        <circle cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4" class="opacity-25"/>
+        <path fill="currentColor" d="M4 12a8 8 0 018-8v8z" class="opacity-75"/>
+      </svg>
+      <span id="dom-status-text"></span>
+    </div>
+  </div>
+
+  <!-- Progress bar -->
+  <div id="dom-progress" class="hidden bg-white rounded-2xl border border-slate-200 p-4 mb-5">
+    <div class="flex items-center justify-between text-xs text-slate-500 mb-2">
+      <span id="dom-visited-label">0 visited</span>
+      <span id="dom-queued-label">0 queued</span>
+    </div>
+    <div class="h-2 bg-slate-100 rounded-full overflow-hidden">
+      <div id="dom-progress-fill" class="h-full bg-emerald-500 transition-all duration-500" style="width:0%"></div>
+    </div>
+  </div>
+
+  <!-- Page list + Live Preview -->
+  <div class="flex gap-5 items-start">
+
+    <!-- Left: Captured pages list -->
+    <div class="flex-1 min-w-0 bg-white rounded-2xl border border-slate-200 overflow-hidden">
+      <div class="flex items-center justify-between px-5 py-3 border-b border-slate-100">
+        <span class="text-sm font-semibold text-slate-700">Captured Pages</span>
+        <button id="dom-export-zip" disabled
+          class="px-3 py-1.5 rounded-lg text-xs font-medium bg-slate-100 text-slate-400 disabled:cursor-not-allowed transition-all">
+          ⬇ Download ZIP
+        </button>
+      </div>
+      <div id="dom-page-list">
+        <div class="px-5 py-12 text-center text-slate-400 text-sm">
+          Enter a URL and click <strong>Start Crawl</strong> to capture DOM snapshots
+        </div>
+      </div>
+    </div>
+
+    <!-- Right: Live Preview -->
+    <div class="w-72 shrink-0 sticky top-20">
+      <div class="bg-white rounded-2xl border border-slate-200 overflow-hidden">
+        <div class="flex items-center justify-between px-4 py-3 border-b border-slate-100">
+          <span class="text-sm font-semibold text-slate-700">Live Preview</span>
+          <span id="preview-badge" class="text-xs px-2 py-0.5 rounded-full bg-slate-100 text-slate-400">Idle</span>
+        </div>
+        <div class="relative bg-slate-900" style="min-height:180px">
+          <img id="preview-img" class="w-full block" style="display:none" alt="Live preview"/>
+          <div id="preview-placeholder" class="absolute inset-0 flex flex-col items-center justify-center gap-2">
+            <svg class="w-10 h-10 opacity-20" fill="none" stroke="#fff" viewBox="0 0 24 24">
+              <rect x="2" y="4" width="20" height="14" rx="2" stroke-width="1.5"/>
+              <path stroke-width="1.5" d="M8 20h8M12 18v2"/>
+            </svg>
+            <p class="text-xs text-slate-400 text-center px-4">Screenshots appear here<br/>as each page is visited</p>
+          </div>
+        </div>
+        <div id="preview-footer" class="hidden border-t border-slate-100">
+          <div id="preview-url" class="px-3 py-2 text-xs text-slate-400 font-mono truncate"></div>
+          <div class="px-3 pb-2">
+            <div class="h-1 bg-slate-100 rounded-full overflow-hidden">
+              <div id="preview-fill" class="h-full bg-emerald-500 transition-all duration-500" style="width:0%"></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+  </div>
+</div><!-- /tab-dom -->
+
+</main>
+
+<script>
+// ── Tab switching ─────────────────────────────────────────────────────────────
+const tabs = { api: document.getElementById('tab-api'), locators: document.getElementById('tab-locators'), dom: document.getElementById('tab-dom') };
+
+document.querySelectorAll('.tab').forEach(btn => {
+  btn.addEventListener('click', () => {
+    const id = btn.dataset.tab;
+    Object.entries(tabs).forEach(([k, el]) => el.classList.toggle('hidden', k !== id));
+    document.querySelectorAll('.tab').forEach(b => {
+      b.className = b.dataset.tab === id
+        ? 'tab tab-active py-2.5 text-sm transition-colors'
+        : 'tab tab-inactive py-2.5 text-sm transition-colors';
+    });
+  });
+});
+
+// ── Helpers ───────────────────────────────────────────────────────────────────
+function esc(s) { return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+function shortUrl(url) { try { const u = new URL(url); return u.pathname + (u.search||''); } catch { return url; } }
+
+function methodBadge(m) {
+  return `<span class="badge-${m} text-xs font-bold px-1.5 py-0.5 rounded">${m}</span>`;
+}
+function statusCell(code) {
+  const cls = code>=500?'status-err':code>=400?'status-warn':'status-ok';
+  return `<span class="${cls}">${code}</span>`;
+}
+function fieldsHtml(schema) {
+  if (!schema?.properties) return '<span class="text-slate-300">—</span>';
+  const keys = Object.keys(schema.properties).slice(0,5);
+  const more = Object.keys(schema.properties).length - 5;
+  return keys.map(k=>`<span class="inline-block bg-slate-100 text-slate-600 px-1 py-0.5 rounded font-mono mr-0.5">${esc(k)}</span>`).join('')
+    + (more>0?`<span class="text-slate-400"> +${more}</span>`:'');
+}
+
+// ── Live Preview ──────────────────────────────────────────────────────────────
+const previewImg    = document.getElementById('preview-img');
+const previewBadge  = document.getElementById('preview-badge');
+const previewPH     = document.getElementById('preview-placeholder');
+const previewFooter = document.getElementById('preview-footer');
+const previewUrl    = document.getElementById('preview-url');
+const previewFill   = document.getElementById('preview-fill');
+
+function updatePreview(b64, pageUrl, pageIndex, maxPages) {
+  previewImg.src = `data:image/jpeg;base64,${b64}`;
+  previewImg.style.display = 'block';
+  previewPH.style.display  = 'none';
+  previewImg.classList.remove('flash');
+  void previewImg.offsetWidth; // force reflow
+  previewImg.classList.add('flash');
+  previewBadge.textContent = `Page ${pageIndex} / ${maxPages}`;
+  previewBadge.className = 'text-xs px-2 py-0.5 rounded-full bg-blue-50 text-blue-600 font-medium';
+  previewUrl.textContent = pageUrl;
+  previewFooter.classList.remove('hidden');
+  previewFill.style.width = Math.min(100, (pageIndex / maxPages) * 100) + '%';
+}
+
+function resetPreview() {
+  previewImg.style.display = 'none';
+  previewPH.style.display  = '';
+  previewBadge.textContent = 'Idle';
+  previewBadge.className   = 'text-xs px-2 py-0.5 rounded-full bg-slate-100 text-slate-400';
+  previewFooter.classList.add('hidden');
+  previewFill.style.width  = '0%';
+}
+
+// ── API TAB ───────────────────────────────────────────────────────────────────
+let apiCallCount = 0, apiEs = null;
+
+const apiUrl     = document.getElementById('api-url');
+const apiMaxP    = document.getElementById('api-maxpages');
+const apiStart   = document.getElementById('api-start');
+const apiTable   = document.getElementById('api-table');
+const apiStatP   = document.getElementById('api-stat-pages');
+const apiStatC   = document.getElementById('api-stat-calls');
+const apiStatU   = document.getElementById('api-stat-unique');
+const apiStatus  = document.getElementById('api-status');
+const apiStatTxt = document.getElementById('api-status-text');
+const apiSpin    = document.getElementById('api-spin');
+const apiExpJson = document.getElementById('api-export-json');
+const apiExpXlsx = document.getElementById('api-export-excel');
+
+function apiSetStatus(msg, spin=true) {
+  apiStatus.classList.remove('hidden');
+  apiStatTxt.textContent = msg;
+  apiSpin.classList.toggle('hidden', !spin);
+}
+
+apiStart.addEventListener('click', () => {
+  const url = apiUrl.value.trim();
+  if (!url) { apiUrl.focus(); return; }
+  apiCallCount = 0;
+  apiStatP.textContent = apiStatC.textContent = apiStatU.textContent = '0';
+  apiTable.innerHTML = '';
+  apiExpJson.disabled = apiExpXlsx.disabled = true;
+  if (apiEs) apiEs.close();
+  apiStart.disabled = apiUrl.disabled = true;
+  apiSetStatus(`Connecting to ${url}…`);
+
+  apiEs = new EventSource(`/api/crawl?url=${encodeURIComponent(url)}&maxPages=${apiMaxP.value}`);
+
+  apiEs.addEventListener('status', e => { apiSetStatus(JSON.parse(e.data).message); });
+  apiEs.addEventListener('page',   e => { const d=JSON.parse(e.data); apiStatP.textContent=d.visited; apiSetStatus(`Crawling: ${shortUrl(d.pageUrl)}`); });
+  apiEs.addEventListener('call',   e => {
+    const c = JSON.parse(e.data);
+    apiCallCount++;
+    apiStatC.textContent = apiCallCount;
+    const tr = document.createElement('tr');
+    tr.id = 'row-'+c.id;
+    tr.className = 'border-b border-slate-50 slide-in hover:bg-slate-50';
+    tr.innerHTML = `
+      <td class="px-4 py-2">${methodBadge(c.method)}</td>
+      <td class="px-4 py-2 font-mono text-slate-700 max-w-xs truncate" title="${esc(c.url)}">${esc(shortUrl(c.url))}</td>
+      <td class="px-4 py-2">${statusCell(c.responseStatus)}</td>
+      <td class="px-4 py-2 text-slate-400 max-w-xs truncate">${esc(shortUrl(c.uiContext?.pageUrl||''))}</td>
+      <td class="px-4 py-2">${fieldsHtml(c.responseSchema)}</td>
+      <td class="px-4 py-2 text-slate-400 italic text-xs" id="db-${c.id}">analyzing…</td>`;
+    apiTable.prepend(tr);
+  });
+  apiEs.addEventListener('inference', e => {
+    const d = JSON.parse(e.data);
+    const cell = document.getElementById('db-'+d.id);
+    if (!cell) return;
+    if (!d.tables?.length) { cell.innerHTML='<span class="text-slate-300">—</span>'; return; }
+    const uniq = [...new Set(d.tables.map(t=>t.inferredTable))];
+    const conf = d.tables[0]?.confidence ?? '';
+    const cc = conf==='high'?'text-green-600':conf==='medium'?'text-yellow-600':'text-red-500';
+    cell.innerHTML = uniq.map(t=>`<span class="bg-purple-50 text-purple-700 px-1 py-0.5 rounded text-xs mr-0.5">${esc(t)}</span>`).join('')
+      + (conf?`<span class="text-xs ${cc} ml-1">${conf}</span>`:'');
+  });
+  apiEs.addEventListener('complete', e => {
+    const d = JSON.parse(e.data);
+    apiStatU.textContent = d.uniqueEndpoints;
+    apiSetStatus(`Done! ${d.totalCalls} calls · ${d.uniqueEndpoints} unique endpoints · ${d.pagesVisited} pages`, false);
+    apiStart.disabled = apiUrl.disabled = false;
+    apiExpJson.disabled = false;
+    apiExpXlsx.disabled = false;
+    apiExpJson.className = 'px-3 py-1.5 rounded-lg text-xs font-medium bg-slate-200 text-slate-700 hover:bg-slate-300 cursor-pointer transition-all';
+    apiExpXlsx.className = 'px-3 py-1.5 rounded-lg text-xs font-medium bg-green-600 text-white hover:bg-green-700 cursor-pointer transition-all';
+    apiEs.close();
+  });
+  apiEs.addEventListener('error', e => {
+    try { apiSetStatus('Error: '+JSON.parse(e.data).message, false); } catch { apiSetStatus('Connection error', false); }
+    apiStart.disabled = apiUrl.disabled = false;
+    apiEs.close();
+  });
+});
+
+apiUrl.addEventListener('keydown', e => { if (e.key==='Enter') apiStart.click(); });
+apiExpJson.addEventListener('click',  () => { window.location.href='/api/export/json'; });
+apiExpXlsx.addEventListener('click', () => { window.location.href='/api/export/excel'; });
+
+// ── LOCATORS TAB ──────────────────────────────────────────────────────────────
+let allLocators = [], locFilter = 'all', locEs = null;
+
+const locUrl     = document.getElementById('loc-url');
+const locFw      = document.getElementById('loc-fw');
+const locScan    = document.getElementById('loc-scan');
+const locList    = document.getElementById('loc-list');
+const locStatus  = document.getElementById('loc-status');
+const locStatTxt = document.getElementById('loc-status-text');
+const locSpin    = document.getElementById('loc-spin');
+
+const TYPE_ABBR  = { button:'BTN', link:'LINK', input:'INP', checkbox:'CHK', radio:'RAD', select:'SEL', textarea:'TXT', custom:'CUST' };
+const TYPE_GROUPS = { button:['button'], input:['input','checkbox','radio','select','textarea'], link:['link'] };
+
+// ── Locators: hover-to-highlight live preview ─────────────────────────────────
+const locPreviewImg    = document.getElementById('loc-preview-img');
+const locPreviewPH     = document.getElementById('loc-preview-placeholder');
+const locPreviewBadge  = document.getElementById('loc-preview-badge');
+let locHoverTimer = null, locHoverToken = 0;
+
+function locPreviewShow(b64) {
+  locPreviewImg.src = `data:image/jpeg;base64,${b64}`;
+  locPreviewImg.style.display = 'block';
+  locPreviewPH.style.display  = 'none';
+  locPreviewBadge.textContent = 'Highlighted';
+  locPreviewBadge.className   = 'text-xs px-2 py-0.5 rounded-full bg-purple-50 text-purple-700 font-medium';
+}
+function locPreviewIdle(msg) {
+  locPreviewBadge.textContent = msg || 'Idle';
+  locPreviewBadge.className   = 'text-xs px-2 py-0.5 rounded-full bg-slate-100 text-slate-400';
+}
+function locPreviewReset() {
+  locPreviewImg.style.display = 'none';
+  locPreviewPH.style.display  = '';
+  locPreviewIdle('Idle');
+}
+function requestHighlight(uid) {
+  const token = ++locHoverToken;
+  locPreviewBadge.textContent = 'Loading…';
+  fetch(`/api/locators/highlight?uid=${encodeURIComponent(uid)}`)
+    .then(r => r.json().then(d => ({ ok: r.ok, d })))
+    .then(({ ok, d }) => {
+      if (token !== locHoverToken) return; // a newer hover already superseded this one
+      if (ok && d.screenshot) locPreviewShow(d.screenshot);
+      else locPreviewIdle('Not found');
+    })
+    .catch(() => { if (token === locHoverToken) locPreviewIdle('Error'); });
+}
+
+function renderLocators() {
+  const fw  = locFw.value;
+  const allowed = locFilter==='all' ? null : (TYPE_GROUPS[locFilter] ?? null);
+  const filtered = allowed ? allLocators.filter(l=>allowed.includes(l.elType)) : allLocators;
+
+  locStatTxt.textContent = filtered.length===allLocators.length
+    ? `${allLocators.length} element${allLocators.length!==1?'s':''} found`
+    : `${filtered.length} of ${allLocators.length} elements (filtered)`;
+  locStatus.classList.remove('hidden');
+  locSpin.classList.add('hidden');
+
+  if (!filtered.length) {
+    locList.innerHTML = '<div class="bg-white rounded-2xl border border-slate-200 p-6 text-center text-slate-400 text-sm">No elements match this filter.</div>';
+    return;
+  }
+
+  locList.innerHTML = '';
+  filtered.forEach(loc => {
+    const abbr = TYPE_ABBR[loc.elType] ?? loc.elType.slice(0,4).toUpperCase();
+    let rows = '';
+    if (fw==='both'||fw==='playwright') {
+      const pw = loc.playwright[0]??'';
+      if (pw) rows += `<div class="flex items-start gap-2 mt-2">
+        <span class="fw-pw text-xs font-bold px-1.5 py-0.5 rounded shrink-0">PW</span>
+        <code class="flex-1 text-xs bg-slate-50 px-2 py-1 rounded font-mono break-all">${esc(pw)}</code>
+        <button class="copy-btn shrink-0 text-xs text-slate-400 hover:text-blue-600 px-1" data-copy="${esc(pw)}">⎘</button>
+      </div>`;
+    }
+    if (fw==='both'||fw==='selenium') {
+      const se = loc.selenium[0]??'';
+      if (se) rows += `<div class="flex items-start gap-2 mt-1">
+        <span class="fw-se text-xs font-bold px-1.5 py-0.5 rounded shrink-0">SE</span>
+        <code class="flex-1 text-xs bg-slate-50 px-2 py-1 rounded font-mono break-all">${esc(se)}</code>
+        <button class="copy-btn shrink-0 text-xs text-slate-400 hover:text-blue-600 px-1" data-copy="${esc(se)}">⎘</button>
+      </div>`;
+    }
+    const card = document.createElement('div');
+    card.className = 'bg-white rounded-xl border border-slate-200 p-3 slide-in';
+    card.innerHTML = `
+      <div class="flex items-center gap-2 mb-1">
+        <span class="el-${abbr} text-xs font-bold px-1.5 py-0.5 rounded">${abbr}</span>
+        <span class="text-sm text-slate-700 truncate">${esc(loc.description)}</span>
+      </div>${rows}`;
+    card.addEventListener('mouseenter', () => {
+      clearTimeout(locHoverTimer);
+      locHoverTimer = setTimeout(() => requestHighlight(loc.uid), 150);
+    });
+    card.addEventListener('mouseleave', () => { clearTimeout(locHoverTimer); });
+    locList.appendChild(card);
+  });
+
+  // Copy buttons
+  locList.querySelectorAll('.copy-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      navigator.clipboard.writeText(btn.dataset.copy ?? '').then(() => {
+        btn.textContent = '✓'; btn.classList.add('text-green-600');
+        setTimeout(()=>{ btn.textContent='⎘'; btn.classList.remove('text-green-600'); }, 1500);
+      }).catch(()=>{});
+    });
+  });
+}
+
+locScan.addEventListener('click', () => {
+  const url = locUrl.value.trim();
+  if (!url) { locUrl.focus(); return; }
+  allLocators = [];
+  locList.innerHTML = '';
+  locPreviewReset();
+  locScan.disabled = true;
+  document.getElementById('loc-scan-label').textContent = 'Scanning…';
+  locStatus.classList.remove('hidden');
+  locSpin.classList.remove('hidden');
+  locStatTxt.textContent = `Loading ${url}…`;
+  if (locEs) locEs.close();
+
+  locEs = new EventSource(`/api/locators?url=${encodeURIComponent(url)}`);
+  locEs.addEventListener('status',  e => { locStatTxt.textContent = JSON.parse(e.data).message; });
+  locEs.addEventListener('locator', e => {
+    allLocators.push(JSON.parse(e.data));
+    locStatTxt.textContent = `Found ${allLocators.length} element${allLocators.length!==1?'s':''}…`;
+  });
+  locEs.addEventListener('complete', () => {
+    locScan.disabled = false;
+    document.getElementById('loc-scan-label').textContent = 'Scan Page';
+    renderLocators();
+    locEs.close();
+  });
+  locEs.addEventListener('error', e => {
+    try { locStatTxt.textContent = 'Error: '+JSON.parse(e.data).message; } catch { locStatTxt.textContent='Scan failed.'; }
+    locSpin.classList.add('hidden');
+    locScan.disabled = false;
+    document.getElementById('loc-scan-label').textContent = 'Scan Page';
+    locEs.close();
+  });
+});
+
+locUrl.addEventListener('keydown', e => { if (e.key==='Enter') locScan.click(); });
+locFw.addEventListener('change', () => { if (allLocators.length) renderLocators(); });
+
+document.querySelectorAll('.lf-btn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('.lf-btn').forEach(b => { b.className='lf-btn px-2.5 py-1 rounded-lg text-xs font-medium bg-slate-100 text-slate-600 hover:bg-slate-200'; });
+    btn.className = 'lf-btn px-2.5 py-1 rounded-lg text-xs font-medium bg-slate-800 text-white';
+    locFilter = btn.dataset.lf;
+    if (allLocators.length) renderLocators();
+  });
+});
+
+// ── DOM COLLECTOR TAB ─────────────────────────────────────────────────────────
+let domPages = 0, domEs = null;
+
+const domUrl      = document.getElementById('dom-url');
+const domMaxP     = document.getElementById('dom-maxpages');
+const domStart    = document.getElementById('dom-start');
+const domPageList = document.getElementById('dom-page-list');
+const domStatus   = document.getElementById('dom-status');
+const domStatTxt  = document.getElementById('dom-status-text');
+const domSpin     = document.getElementById('dom-spin');
+const domProgress = document.getElementById('dom-progress');
+const domVisited  = document.getElementById('dom-visited-label');
+const domQueued   = document.getElementById('dom-queued-label');
+const domFill     = document.getElementById('dom-progress-fill');
+const domExpZip   = document.getElementById('dom-export-zip');
+
+function domSetStatus(msg, spin=true) {
+  domStatus.classList.remove('hidden');
+  domStatTxt.textContent = msg;
+  domSpin.classList.toggle('hidden', !spin);
+}
+
+function renderDomPageRow(d) {
+  domPages++;
+  if (domPageList.querySelector('.text-center')) domPageList.innerHTML = '';
+  const row = document.createElement('div');
+  row.className = 'flex items-center gap-3 px-5 py-3 border-b border-slate-50 hover:bg-slate-50 slide-in';
+  row.innerHTML = `
+    <span class="w-7 h-7 rounded-full bg-emerald-100 text-emerald-700 text-xs font-bold flex items-center justify-center shrink-0">${d.index}</span>
+    <div class="flex-1 min-w-0">
+      <div class="text-sm text-slate-700 font-medium truncate">${esc(d.title||'(no title)')}</div>
+      <div class="text-xs text-slate-400 font-mono truncate">${esc(d.url)}</div>
+    </div>
+    <span class="text-xs text-slate-400 shrink-0">${d.elementCount} els</span>`;
+  domPageList.appendChild(row);
+  domExpZip.disabled = false;
+  domExpZip.className = 'px-3 py-1.5 rounded-lg text-xs font-medium bg-emerald-600 text-white hover:bg-emerald-700 cursor-pointer transition-all';
+}
+
+// Persistent link to the Chrome extension's manual DOM capture (Crawler tab →
+// "Send to Agent"). Open for the dashboard's whole lifetime, independent of
+// any Start Crawl click, so pages sent while browsing elsewhere aren't missed.
+const domExtLinkBadge = document.getElementById('dom-ext-link-badge');
+const domManualEs = new EventSource('/api/dom/manual-stream');
+domManualEs.addEventListener('dompage', e => {
+  renderDomPageRow(JSON.parse(e.data));
+  if (domExtLinkBadge) {
+    domExtLinkBadge.textContent = '🔌 Receiving from extension';
+    domExtLinkBadge.className = 'text-xs px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-700 font-medium';
+  }
+});
+
+domStart.addEventListener('click', () => {
+  const url = domUrl.value.trim();
+  if (!url) { domUrl.focus(); return; }
+  domPages = 0;
+  domPageList.innerHTML = '';
+  domExpZip.disabled = true;
+  domExpZip.className = 'px-3 py-1.5 rounded-lg text-xs font-medium bg-slate-100 text-slate-400 disabled:cursor-not-allowed transition-all';
+  domProgress.classList.remove('hidden');
+  domFill.style.width = '0%';
+  domVisited.textContent = '0 visited';
+  domQueued.textContent  = '0 queued';
+  resetPreview();
+  if (domEs) domEs.close();
+  domStart.disabled = domUrl.disabled = true;
+  domSetStatus(`Starting crawl of ${url}…`);
+
+  domEs = new EventSource(`/api/crawl?url=${encodeURIComponent(url)}&maxPages=${domMaxP.value}`);
+
+  domEs.addEventListener('screenshot', e => { const d=JSON.parse(e.data); updatePreview(d.screenshot, d.pageUrl, d.pageIndex, d.maxPages); });
+  domEs.addEventListener('page', e => {
+    const d = JSON.parse(e.data);
+    domVisited.textContent = `${d.visited} visited`;
+    domQueued.textContent  = `${d.queued} queued`;
+    const pct = Math.min(100, (d.visited / Number(domMaxP.value)) * 100);
+    domFill.style.width = pct + '%';
+    domSetStatus(`Crawling: ${shortUrl(d.pageUrl)}`);
+  });
+  domEs.addEventListener('dompage', e => { renderDomPageRow(JSON.parse(e.data)); });
+  domEs.addEventListener('complete', e => {
+    const d = JSON.parse(e.data);
+    domFill.style.width = '100%';
+    domSetStatus(`Done! ${d.domPages} page${d.domPages!==1?'s':''} captured. Ready to download ZIP.`, false);
+    domStart.disabled = domUrl.disabled = false;
+    if (d.domPages > 0) {
+      domExpZip.disabled = false;
+      domExpZip.className = 'px-3 py-1.5 rounded-lg text-xs font-medium bg-emerald-600 text-white hover:bg-emerald-700 cursor-pointer transition-all';
+    }
+    previewBadge.textContent = `Done · ${d.domPages} page${d.domPages!==1?'s':''}`;
+    previewBadge.className   = 'text-xs px-2 py-0.5 rounded-full bg-green-50 text-green-700 font-medium';
+    previewFill.style.width  = '100%';
+    domEs.close();
+  });
+  domEs.addEventListener('error', e => {
+    try { domSetStatus('Error: '+JSON.parse(e.data).message, false); } catch { domSetStatus('Crawl failed.', false); }
+    domStart.disabled = domUrl.disabled = false;
+    domEs.close();
+  });
+});
+
+domUrl.addEventListener('keydown', e => { if (e.key==='Enter') domStart.click(); });
+domExpZip.addEventListener('click', () => { window.location.href='/api/export/zip'; });
+</script>
+</body>
+</html>

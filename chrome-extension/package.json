@@ -8,12 +8,14 @@
     "build": "webpack --config webpack.config.ts",
     "watch": "webpack --config webpack.config.ts --watch",
     "build:prod": "node scripts/generate-icons.js && cross-env NODE_ENV=production webpack --config webpack.config.ts",
+    "package": "powershell -ExecutionPolicy Bypass -File scripts/package.ps1",
     "type-check": "tsc --noEmit",
     "lint": "eslint src --ext .ts"
   },
   "devDependencies": {
     "@types/chrome": "^0.0.268",
     "@types/har-format": "^1.2.16",
+    "@types/jszip": "^3.4.0",
     "@types/node": "^20.0.0",
     "@typescript-eslint/eslint-plugin": "^7.0.0",
     "@typescript-eslint/parser": "^7.0.0",
@@ -24,6 +26,10 @@
     "ts-node": "^10.9.2",
     "typescript": "^5.4.0",
     "webpack": "^5.91.0",
-    "webpack-cli": "^5.1.4"
+  "webpack-cli": "^5.1.4"
+  },
+  "dependencies": {
+    "@qalens/shared": "*",
+    "jszip": "^3.10.1"
   }
 }

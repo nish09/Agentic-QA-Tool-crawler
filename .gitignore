@@ -1,9 +1,13 @@
 # Dependencies
 node_modules/
+.env
 
 # Build output
 dist/
 *.zip
+
+# Agent run artifacts
+agent/output/
 
 # Editor/OS cruft
 .DS_Store

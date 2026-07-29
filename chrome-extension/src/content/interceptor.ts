@@ -9,9 +9,31 @@
 
 const MSG_SOURCE = 'qalens-interceptor';
 
+// Bodies larger than this are never buffered/parsed — only their size is
+// recorded. Parsing a multi-MB JSON string on every request is the actual
+// CPU/memory cost we're guarding against; real API responses are almost
+// always well under this.
+const MAX_CAPTURE_BYTES = 1_000_000;
+
 function emit(payload: Record<string, unknown>): void {
   if (typeof payload['url'] === 'string' && payload['url'].startsWith('chrome-extension://')) return;
   window.postMessage({ __src: MSG_SOURCE, type: 'QALENS_CALL', payload }, '*');
+}
+
+// ─── Skip patching in cross-origin iframes ────────────────────────────────────
+// With all_frames:true, every ad/tracker/widget iframe on the page gets its
+// own fetch/XHR patch — on ad-heavy pages that multiplies interception
+// overhead many times over for frames the user never cares about. Accessing
+// window.top.location throws for cross-origin frames, which conveniently
+// doubles as the detection check.
+function isThirdPartyFrame(): boolean {
+  if (window === window.top) return false;
+  try {
+    void window.top?.location.href;
+    return false; // same-origin iframe — likely part of the app itself
+  } catch {
+    return true; // cross-origin — skip
+  }
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -53,11 +75,18 @@ function decodeText(raw: string): unknown {
   if (raw.length === 0) return '(empty body)';
   const trimmed = raw.trim();
   if (trimmed.length === 0) return '(empty body)';
+  if (raw.length > MAX_CAPTURE_BYTES) {
+    // Skip JSON.parse on huge text — that parse is the expensive part, not the
+    // slice below. Still surface a preview so the user knows something was there.
+    return raw.slice(0, 5000) + `… [truncated — body is ${raw.length.toLocaleString()} bytes]`;
+  }
   try { return JSON.parse(trimmed); } catch { /* not JSON */ }
   return raw.length > 5000 ? raw.slice(0, 5000) + '…' : raw;
 }
 
 // ─── Patch fetch ──────────────────────────────────────────────────────────────
+
+if (!isThirdPartyFrame()) {
 
 const _fetch = window.fetch.bind(window);
 
@@ -97,9 +126,17 @@ window.fetch = async function (
   try {
     const ct = (response.headers.get('content-type') ?? '').toLowerCase();
 
+    const clHeader = response.headers.get('content-length');
+    const contentLength = clHeader ? parseInt(clHeader, 10) : NaN;
+
     if (isBinaryContentType(ct)) {
       responseBody = `[Binary: ${ct || 'unknown'}]`;
       // Binary: return original response untouched — body unread, page uses it normally
+    } else if (!Number.isNaN(contentLength) && contentLength > MAX_CAPTURE_BYTES) {
+      // Known-large body: skip reading and reconstructing entirely — that work
+      // (buffering + rebuilding a Response) is itself the CPU/memory cost for
+      // big payloads. Let the page's original response through untouched.
+      responseBody = `[Large body: ${contentLength.toLocaleString()} bytes — not captured]`;
     } else {
       // Consume body from the original response stream
       const rawText = await response.text();
@@ -176,8 +213,13 @@ XMLHttpRequest.prototype.send = function (body?: Document | XMLHttpRequestBodyIn
       if (isBinaryContentType(ct)) {
         responseBody = `[Binary: ${ct || 'unknown'}]`;
       } else if (rType === 'json') {
-        // When responseType='json' the browser parses it; responseText is empty
-        responseBody = this.response ?? '(empty body)';
+        // When responseType='json' the browser parses it; responseText is empty.
+        // The browser already paid the parse cost, but we still cap what we
+        // forward/store so a huge parsed object doesn't bloat storage unbounded.
+        const cl = parseInt(this.getResponseHeader('content-length') ?? '', 10);
+        responseBody = (!Number.isNaN(cl) && cl > MAX_CAPTURE_BYTES)
+          ? `[Large body: ${cl.toLocaleString()} bytes — not captured]`
+          : (this.response ?? '(empty body)');
       } else if (rType === '' || rType === 'text') {
         responseBody = decodeText(this.responseText ?? '');
       } else if (rType === 'document') {
@@ -220,3 +262,5 @@ XMLHttpRequest.prototype.send = function (body?: Document | XMLHttpRequestBodyIn
   return _xhrSend.call(this, body);
 };
 /* eslint-enable @typescript-eslint/no-explicit-any */
+
+} // end isThirdPartyFrame guard

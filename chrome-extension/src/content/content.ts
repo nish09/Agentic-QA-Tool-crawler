@@ -4,7 +4,7 @@
  * 2. Bridges postMessage from the MAIN-world interceptor.ts → service worker.
  */
 
-import type { UIContext, TriggerAction } from '../../../shared/types';
+import type { UIContext, TriggerAction } from '@qalens/shared/types';
 
 let lastUIContext: UIContext = {
   pageUrl: window.location.href,
@@ -79,6 +79,22 @@ function getDOMPath(el: Element): string {
 }
 
 // ─── UIContext tracking ───────────────────────────────────────────────────────
+// Skipped in cross-origin (ad/tracker/widget) iframes — with all_frames:true
+// every such iframe would otherwise get its own capture-phase document
+// listeners, adding up on iframe-heavy pages for frames that never trigger
+// API calls worth attributing anyway.
+
+function isThirdPartyFrame(): boolean {
+  if (window === window.top) return false;
+  try {
+    void window.top?.location.href;
+    return false; // same-origin iframe — likely part of the app itself
+  } catch {
+    return true; // cross-origin — skip
+  }
+}
+
+if (!isThirdPartyFrame()) {
 
 document.addEventListener('click', (e) => {
   const target = e.target as Element;
@@ -103,6 +119,8 @@ document.addEventListener('input', (e) => {
   };
   sendUIContext(lastUIContext);
 }, true);
+
+} // end isThirdPartyFrame guard
 
 window.addEventListener('load', () => {
   lastUIContext = {
@@ -471,6 +489,22 @@ function scanPageLocators(): LocatorResult[] {
   return results;
 }
 
+// Returns a short, stable CSS selector for a given element.
+function getCssSelector(el: Element): string {
+  if (el.id) return `#${CSS.escape(el.id)}`;
+  const path: string[] = [];
+  let cur: Element | null = el;
+  while (cur && cur.tagName !== 'BODY' && cur.tagName !== 'HTML') {
+    const tag = cur.tagName.toLowerCase();
+    const siblings = cur.parentElement
+      ? Array.from(cur.parentElement.children).filter(c => c.tagName === cur!.tagName)
+      : [];
+    path.unshift(siblings.length > 1 ? `${tag}:nth-of-type(${siblings.indexOf(cur) + 1})` : tag);
+    cur = cur.parentElement;
+  }
+  return path.join(' > ');
+}
+
 // Handle scan + highlight requests from the popup (all synchronous)
 chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   if (msg.type === 'SET_CAPTURING') {
@@ -497,6 +531,50 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   if (msg.type === 'CLEAR_HIGHLIGHT') {
     clearHl();
     sendResponse({ ok: true });
+    return false;
+  }
+
+  if (msg.type === 'CRAWL_CAPTURE_DOM') {
+    try {
+      const links = Array.from(document.querySelectorAll<HTMLAnchorElement>('a[href]'))
+        .map(a => a.href)
+        .filter(h => h.startsWith('http'));
+
+      const elements = Array.from(
+        document.querySelectorAll<HTMLElement>(
+          'a[href], button, input:not([type="hidden"]), select, textarea, [role="button"], [role="link"], [role="tab"], [role="menuitem"]'
+        )
+      ).slice(0, 300).map(el => {
+        const tag = el.tagName.toLowerCase();
+        const text = (el.textContent ?? '').trim().slice(0, 120);
+        const entry: Record<string, string> = { type: tag, text, selector: getCssSelector(el) };
+        if (el.id) entry['id'] = el.id;
+        const name = el.getAttribute('name');
+        if (name) entry['name'] = name;
+        const href = (el as HTMLAnchorElement).href;
+        if (href) entry['href'] = href;
+        const role = el.getAttribute('role');
+        if (role) entry['role'] = role;
+        const placeholder = el.getAttribute('placeholder');
+        if (placeholder) entry['placeholder'] = placeholder;
+        return entry;
+      });
+
+      const rawDom = document.documentElement.outerHTML;
+      const dom = rawDom.length > 2_000_000
+        ? rawDom.slice(0, 2_000_000) + '<!-- DOM truncated by QALens -->'
+        : rawDom;
+
+      sendResponse({
+        ok: true,
+        dom,
+        title: document.title,
+        links: [...new Set(links)],
+        elements,
+      });
+    } catch (e) {
+      sendResponse({ ok: false, error: String(e) });
+    }
     return false;
   }
 });

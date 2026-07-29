@@ -1,0 +1,38 @@
+version: '3.8'
+
+services:
+  agent:
+    build:
+      # Context is project root so the Dockerfile can COPY shared/ alongside agent/
+      context: ../..
+      dockerfile: agent/docker/Dockerfile
+    volumes:
+      # Reports land in agent/output/ on your host machine
+      - ../output:/output
+    environment:
+      # Cloud AI — leave blank to use Ollama fallback instead
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
+      # Air-gapped fallback — set to http://ollama:11434 when running the ollama profile
+      - OLLAMA_URL=${OLLAMA_URL:-}
+      - MAX_PAGES=${MAX_PAGES:-10}
+      - TIMEOUT_MS=${TIMEOUT_MS:-30000}
+      - HEADLESS=${HEADLESS:-true}
+      - OUTPUT_DIR=/output
+    # Passes the TARGET_URL arg: docker-compose run agent https://example.com
+    # network_mode: host gives the container access to localhost and VPN/intranet URLs.
+    # On Docker Desktop (Windows/Mac) replace localhost in your URL with host.docker.internal.
+    network_mode: host
+
+  # ── Air-gapped / no-internet profile ────────────────────────────────────────
+  # Start with: docker-compose --profile airgap up ollama
+  # Then set OLLAMA_URL=http://localhost:11434 in your .env
+  ollama:
+    image: ollama/ollama:latest
+    profiles: ["airgap"]
+    volumes:
+      - ollama_data:/root/.ollama
+    ports:
+      - "11434:11434"
+
+volumes:
+  ollama_data:

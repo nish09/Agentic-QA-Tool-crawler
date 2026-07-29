@@ -1,0 +1,8 @@
+{
+  "name": "@qalens/shared",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Types and utilities shared between the QALens Chrome extension and the QALens SaaS agent/backend",
+  "types": "types/index.ts",
+  "main": "types/index.ts"
+}

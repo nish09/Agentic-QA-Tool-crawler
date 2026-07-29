@@ -26,7 +26,8 @@
     <!-- Mode tabs -->
     <div id="mode-tabs">
       <button class="mode-tab active" data-mode="api">📡 API Calls</button>
-      <button class="mode-tab" data-mode="locators">🔍 Page Locators</button>
+      <button class="mode-tab" data-mode="locators">🔍 Locators</button>
+      <button class="mode-tab" data-mode="crawler">🕷 Crawler</button>
     </div>
 
     <!-- ── API Calls view ────────────────────────────────────────────────── -->
@@ -105,6 +106,63 @@
       </div>
 
     </div><!-- /#locators-view -->
+
+    <!-- ── Crawler view ─────────────────────────────────────────────────────── -->
+    <div id="crawler-view" class="hidden">
+
+      <!-- Settings toolbar -->
+      <div id="crawler-toolbar">
+        <div id="crawl-mode-tabs">
+          <button class="crawl-mode-btn active" data-crawl-mode="auto">⚡ Auto</button>
+          <button class="crawl-mode-btn" data-crawl-mode="manual">👆 Manual</button>
+        </div>
+        <label class="crawler-label" id="crawl-max-pages-wrap">Max
+          <select id="crawl-max-pages">
+            <option value="10">10</option>
+            <option value="20" selected>20</option>
+            <option value="50">50</option>
+            <option value="100">100</option>
+          </select>
+        </label>
+        <button id="crawl-start-btn">▶ Start Crawl</button>
+      </div>
+      <div id="crawl-mode-hint">Extension navigates links automatically.</div>
+
+      <!-- Send captures to the local QALens Agent dashboard as they're captured -->
+      <label id="crawl-agent-link" class="crawler-label">
+        <input type="checkbox" id="crawl-send-agent"/>
+        Send to Agent (localhost:3000)
+      </label>
+      <div id="crawl-agent-status" class="hidden"></div>
+
+      <!-- Progress -->
+      <div id="crawler-progress" class="hidden">
+        <div id="crawl-status-text">Crawling…</div>
+        <div id="crawl-meta">
+          <span id="crawl-visited">0 visited</span>
+          <span id="crawl-queued">0 queued</span>
+        </div>
+        <div id="crawl-progress-bar"><div id="crawl-progress-fill"></div></div>
+      </div>
+
+      <!-- Crawled pages list -->
+      <div id="crawl-page-list">
+        <div id="crawl-empty">
+          <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+            <circle cx="12" cy="12" r="10"/>
+            <path d="M12 8v4M12 16h.01" stroke-linecap="round"/>
+          </svg>
+          <p>Click <strong>Start</strong> to begin capturing pages.</p>
+          <p class="hint" id="crawl-empty-hint">Extension will navigate links automatically.</p>
+        </div>
+      </div>
+
+      <!-- Download actions -->
+      <div id="crawler-actions" class="hidden">
+        <button id="crawl-download-btn" class="primary">⬇ Download ZIP</button>
+      </div>
+
+    </div><!-- /#crawler-view -->
 
     <!-- Bottom action bar -->
     <div id="actions">

@@ -112,6 +112,59 @@ function cancelSettled(tabId: number): void {
   chrome.storage.local.remove([`qalens_settled_${tabId}`]);
 }
 
+// ─── In-memory per-tab cache + debounced storage flush ─────────────────────────
+// upsertCall() used to do a full storage.local.get + JSON-serialize + set of
+// the entire per-tab array on EVERY single captured call — and it runs twice
+// per real request (once from the interceptor relay, once from webRequest).
+// On a chatty page (polling, live dashboards) that's constant disk-backed
+// ser/deserialize of a growing array, which is the main source of the CPU
+// spikes. Instead, keep the authoritative array in memory and coalesce writes
+// to storage so a burst of requests produces one write, not N.
+
+const FLUSH_INTERVAL_MS = 300;
+
+const tabCallsCache = new Map<number, CapturedCall[]>();
+const pendingFlush   = new Map<number, ReturnType<typeof setTimeout>>();
+const lastFlushAt    = new Map<number, number>();
+
+let capturingFlag = true;
+chrome.storage.local.get(CAPTURE_KEY).then((f) => {
+  capturingFlag = (f as Record<string, unknown>)[CAPTURE_KEY] !== false;
+});
+
+async function getCachedCalls(tabId: number): Promise<CapturedCall[]> {
+  const cached = tabCallsCache.get(tabId);
+  if (cached) return cached;
+  // Cold cache (e.g. service worker was just woken up) — seed from storage once.
+  const key = `qalens_${tabId}`;
+  const existing = await chrome.storage.local.get(key) as Record<string, CapturedCall[]>;
+  const calls = Array.isArray(existing[key]) ? existing[key] : [];
+  tabCallsCache.set(tabId, calls);
+  return calls;
+}
+
+async function flushTab(tabId: number): Promise<void> {
+  pendingFlush.delete(tabId);
+  lastFlushAt.set(tabId, Date.now());
+  const calls = tabCallsCache.get(tabId);
+  if (!calls) return;
+  await chrome.storage.local.set({ [`qalens_${tabId}`]: calls });
+}
+
+function scheduleFlush(tabId: number): void {
+  if (pendingFlush.has(tabId)) return; // already scheduled — this burst will ride that flush
+  const elapsed = Date.now() - (lastFlushAt.get(tabId) ?? 0);
+  const wait = Math.max(0, FLUSH_INTERVAL_MS - elapsed);
+  pendingFlush.set(tabId, setTimeout(() => { flushTab(tabId).catch(() => {}); }, wait));
+}
+
+function clearTabCache(tabId: number): void {
+  tabCallsCache.delete(tabId);
+  lastFlushAt.delete(tabId);
+  const t = pendingFlush.get(tabId);
+  if (t) { clearTimeout(t); pendingFlush.delete(tabId); }
+}
+
 // ─── Merge a partial call record into the per-tab list ────────────────────────
 // Matches an existing entry by method+url within MERGE_WINDOW_MS so the two
 // capture sources enrich the same logical request instead of duplicating it.
@@ -122,8 +175,7 @@ async function upsertCall(
   tabId: number,
   rawPatch: Partial<CapturedCall> & { method: string; url: string; timestamp: number; source: CapturedCall['source'] },
 ): Promise<void> {
-  const flags = await chrome.storage.local.get(CAPTURE_KEY) as Record<string, unknown>;
-  if (flags[CAPTURE_KEY] === false) return;
+  if (!capturingFlag) return;
 
   cancelSettled(tabId);
 
@@ -137,9 +189,7 @@ async function upsertCall(
     responseBody:    truncateBody(redactBody(rawPatch.responseBody)),
   };
 
-  const key = `qalens_${tabId}`;
-  const existing = await chrome.storage.local.get(key) as Record<string, CapturedCall[]>;
-  let calls: CapturedCall[] = Array.isArray(existing[key]) ? existing[key] : [];
+  let calls = await getCachedCalls(tabId);
 
   const idx = calls.findIndex(c =>
     c.method === patch.method &&
@@ -169,7 +219,8 @@ async function upsertCall(
     calls = calls.slice(calls.length - MAX_CALLS_PER_TAB);
   }
 
-  await chrome.storage.local.set({ [key]: calls });
+  tabCallsCache.set(tabId, calls);
+  scheduleFlush(tabId);
   scheduleSettled(tabId);
 }
 
@@ -214,6 +265,14 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       cancelSettled(tabId);
       scheduleSettled(tabId);
     }
+    sendResponse({ ok: true });
+  }
+
+  // Popup clicked "Clear" — drop the in-memory cache too, so a pending debounced
+  // flush can't resurrect the just-cleared calls after the storage.remove below.
+  if (message.type === 'CLEAR_TAB_CALLS') {
+    const tabId = message.tabId as number | undefined;
+    if (tabId !== undefined) clearTabCache(tabId);
     sendResponse({ ok: true });
   }
 
@@ -297,6 +356,7 @@ chrome.webRequest.onErrorOccurred.addListener(
 chrome.webNavigation.onBeforeNavigate.addListener((details) => {
   if (details.frameId !== 0) return; // main frame only
   cancelSettled(details.tabId);
+  clearTabCache(details.tabId);
   chrome.storage.local.remove([
     `qalens_${details.tabId}`,
     `qalens_settled_${details.tabId}`,
@@ -313,12 +373,28 @@ chrome.tabs.onUpdated.addListener((tabId, changeInfo) => {
   }
 });
 
+// ─── Per-tab panel visibility ─────────────────────────────────────────────────
+// chrome.sidePanel is window-level: once opened it stays visible across all
+// tabs. Simulate per-tab behaviour by disabling the panel for every tab that
+// the user didn't explicitly open it for, and re-enabling it when they switch
+// back to a tab where they did.
+chrome.tabs.onActivated.addListener(({ tabId }) => {
+  if (!chrome.sidePanel) return;
+  if (panelOpenTabs.has(tabId)) {
+    chrome.sidePanel.setOptions({ tabId, enabled: true, path: 'popup.html' }).catch(() => {});
+  } else {
+    chrome.sidePanel.setOptions({ tabId, enabled: false }).catch(() => {});
+  }
+});
+
 // ─── Clear data on tab close ─────────────────────────────────────────────────
 // Without this, a closed tab's captured calls sit in chrome.storage.local
 // forever (onBeforeNavigate above only fires on navigation, not closure).
 
 chrome.tabs.onRemoved.addListener((tabId) => {
   cancelSettled(tabId);
+  clearTabCache(tabId);
+  panelOpenTabs.delete(tabId);
   chrome.storage.local.remove([
     `qalens_${tabId}`,
     `qalens_settled_${tabId}`,
@@ -349,37 +425,56 @@ async function sweepStaleTabData(): Promise<void> {
 // still let interceptor.ts/content.ts capture and relay data, just silently
 // drop it here. Broadcasting SET_CAPTURING lets content.ts stop relaying at
 // the source, so nothing leaves the page while paused.
+// Promise.allSettled is used so tabs without content scripts (new tab page,
+// chrome:// pages, etc.) don't surface "Could not establish connection" errors.
 
-chrome.storage.onChanged.addListener((changes, area) => {
+chrome.storage.onChanged.addListener(async (changes, area) => {
   if (area !== 'local' || !changes[CAPTURE_KEY]) return;
   const capturing = changes[CAPTURE_KEY].newValue !== false;
-  chrome.tabs.query({}, (tabs) => {
-    for (const tab of tabs) {
-      if (tab.id === undefined) continue;
-      chrome.tabs.sendMessage(tab.id, { type: 'SET_CAPTURING', capturing }).catch(() => {});
-    }
-  });
+  capturingFlag = capturing;
+  const tabs = await chrome.tabs.query({});
+  await Promise.allSettled(
+    tabs
+      .filter(t => t.id !== undefined)
+      .map(t => chrome.tabs.sendMessage(t.id!, { type: 'SET_CAPTURING', capturing })),
+  );
 });
 
-// ─── Side panel — tab-specific ───────────────────────────────────────────────
-// openPanelOnActionClick: false → Chrome does NOT auto-open the panel globally,
-// so action.onClicked fires. We then open it only for the clicked tab.
+// ─── Side panel — per-tab ────────────────────────────────────────────────────
+// Panel is globally enabled (required for chrome.sidePanel.open() to work) but
+// openPanelOnActionClick is false so it never auto-opens. We track which tabs
+// have the panel open in a Set and toggle manually on each icon click.
+// Closing is done by setting enabled:false per-tab; re-opening restores it.
 
-chrome.sidePanel
-  .setPanelBehavior({ openPanelOnActionClick: false })
-  .catch(() => {});
+const panelOpenTabs = new Set<number>();
+
+if (chrome.sidePanel) {
+  chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: false }).catch(() => {});
+  chrome.sidePanel.setOptions({ enabled: true, path: 'popup.html' }).catch(() => {});
+}
 
 chrome.action.onClicked.addListener((tab) => {
-  if (!tab.id) return;
-  chrome.sidePanel.open({ tabId: tab.id }).catch(console.error);
+  if (!tab.id || !chrome.sidePanel?.open) return;
+  const tabId = tab.id;
+  if (panelOpenTabs.has(tabId)) {
+    panelOpenTabs.delete(tabId);
+    chrome.sidePanel.setOptions({ tabId, enabled: false }).catch(() => {});
+  } else {
+    panelOpenTabs.add(tabId);
+    // Both calls are synchronous (no await) — user gesture token is still alive.
+    // Chrome queues them in order over IPC, so setOptions is processed before open().
+    chrome.sidePanel.setOptions({ tabId, enabled: true, path: 'popup.html' }).catch(() => {});
+    chrome.sidePanel.open({ tabId }).catch(() => panelOpenTabs.delete(tabId));
+  }
 });
 
 // ─── Init ─────────────────────────────────────────────────────────────────────
 
 chrome.runtime.onInstalled.addListener(() => {
   chrome.storage.local.set({ [CAPTURE_KEY]: true });
-  chrome.sidePanel
-    .setPanelBehavior({ openPanelOnActionClick: false })
-    .catch(() => {});
+  if (chrome.sidePanel) {
+    chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: false }).catch(() => {});
+    chrome.sidePanel.setOptions({ enabled: true, path: 'popup.html' }).catch(() => {});
+  }
   sweepStaleTabData().catch(() => {});
 });
