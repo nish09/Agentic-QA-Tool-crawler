@@ -6,6 +6,9 @@ node_modules/
 dist/
 *.zip
 
+# Agent run artifacts
+agent/output/
+
 # Editor/OS cruft
 .DS_Store
 Thumbs.db

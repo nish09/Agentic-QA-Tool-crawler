@@ -8,9 +8,14 @@ FROM mcr.microsoft.com/playwright:v1.52.0-noble
 # to local development.
 WORKDIR /project
 
-# Install agent dependencies (separate layer — only re-runs when package.json changes)
+# @qalens/shared is resolved as an npm workspace symlink (see package-lock.json),
+# which only exists when npm ci runs from the workspace root — so all workspace
+# manifests must be present, not just agent/'s.
+COPY package*.json ./
 COPY agent/package*.json ./agent/
-RUN cd agent && npm ci
+COPY shared/package*.json ./shared/
+COPY chrome-extension/package*.json ./chrome-extension/
+RUN npm ci
 
 # Copy shared utilities (needed by relative imports in agent/src)
 COPY shared/ ./shared/
